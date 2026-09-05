@@ -1,0 +1,63 @@
+{
+  "expo": {
+    "name": "Reminder54",
+    "slug": "Reminder54",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/notiva-logo.png",
+    "scheme": "reminder54",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#4d3fe6",
+        "foregroundImage": "./assets/images/notiva-logo.png",
+        "backgroundImage": "./assets/images/notiva-logo.png",
+        "monochromeImage": "./assets/images/notiva-logo.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "package": "com.anonymous.Reminder54",
+      "permissions": [
+        "android.permission.SCHEDULE_EXACT_ALARM"
+      ]
+    },
+    "web": {
+      "output": "static",
+      "favicon": "./assets/images/notiva-logo.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/notiva-logo.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#4d3fe6",
+          "dark": {
+            "backgroundColor": "#4d3fe6"
+          }
+        }
+      ],
+      "@react-native-community/datetimepicker",
+      [
+        "expo-notifications",
+        {
+          "color": "#4d3fe6"
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "aa0a4911-49b8-4a4e-a7df-24b78eec6414"
+      }
+    }
+  }
+}
