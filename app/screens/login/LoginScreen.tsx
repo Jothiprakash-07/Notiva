@@ -16,13 +16,16 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { useAuth } from "../../../contexts/AuthContext";
+import { AuthSession } from "../../../types/auth";
+
 const headerLogo = require("../../../assets/images/notiva-logo.png");
 const popupLogo = require("../../../assets/images/Blue-logo.png");
 
 // IMPORTANT:
 // Expo mobile app cannot use localhost on a physical phone.
 // Use your laptop LAN IP address.
-const API_BASE_URL = "http://192.168.1.239:5000";
+const API_BASE_URL = "http://10.211.55.42:5000";
 
 type LoginScreenProps = {
   onUserRegister?: () => void;
@@ -33,6 +36,7 @@ export default function LoginScreen({
   onUserRegister,
   onOrganizationRegister,
 }: LoginScreenProps) {
+  const { signIn } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -79,12 +83,18 @@ export default function LoginScreen({
 
       const data = await response.json();
 
-      console.log("Login status:", response.status);
-      console.log("Login response:", data);
-
       if (!response.ok) {
         throw new Error(data?.message || "Login failed.");
       }
+
+      if (!data?.token || !data?.user?.id || !data?.user?.fullName) {
+        throw new Error("Login response is missing session information.");
+      }
+
+      await signIn({
+        token: data.token,
+        user: data.user,
+      } as AuthSession);
 
       // Bottom navigation becomes active only after successful login.
       router.replace("/(tabs)");

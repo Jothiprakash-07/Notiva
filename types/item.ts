@@ -24,6 +24,7 @@ export type ReminderItem = {
   alertBefore: AlertBefore;
   status?: ItemStatus;
   completed?: boolean;
+  actionResolved?: boolean;
   notificationIds: string[];
   createdAt: string;
   updatedAt: string;

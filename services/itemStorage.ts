@@ -62,9 +62,25 @@ export function toggleComplete(id: string) {
   return mutate(async () => {
     const items = await read();
     const item = items.find((current) => current.id === id);
-    if (!item || getItemStatus(item) !== "Pending" || !["reminder", "task"].includes(item.type)) return item;
+    const status = item ? getItemStatus(item) : undefined;
+    if (!item || !status || !["Pending", "Missed", "Overdue"].includes(status) || !["reminder", "task"].includes(item.type)) return item;
     await cancelNotifications(item.notificationIds);
-    const next: ReminderItem = { ...item, completed: true, status: "Done", notificationIds: [], updatedAt: new Date().toISOString() };
+    const next: ReminderItem = { ...item, completed: true, actionResolved: true, status: "Done", notificationIds: [], updatedAt: new Date().toISOString() };
+    await persist(items.map((current) => current.id === id ? next : current));
+    return next;
+  });
+}
+
+export function resolveItemAction(id: string) {
+  return mutate(async () => {
+    const items = await read();
+    const item = items.find((current) => current.id === id);
+    if (!item) throw new Error("Item not found.");
+    const next: ReminderItem = {
+      ...item,
+      actionResolved: true,
+      updatedAt: new Date().toISOString(),
+    };
     await persist(items.map((current) => current.id === id ? next : current));
     return next;
   });
@@ -82,7 +98,7 @@ export function rescheduleItem(item: ReminderItem) {
     if (!Number.isFinite(start) || start <= Date.now() || !Number.isFinite(alert) || alert <= Date.now()) {
       throw new Error("Choose a future date, time and alert time.");
     }
-    const next: ReminderItem = { ...item, id: existing.id, type: existing.type, createdAt: existing.createdAt, completed: false, status: undefined, notificationIds: [], updatedAt: new Date().toISOString() };
+    const next: ReminderItem = { ...item, id: existing.id, type: existing.type, createdAt: existing.createdAt, completed: false, actionResolved: false, status: undefined, notificationIds: [], updatedAt: new Date().toISOString() };
     await cancelNotifications(existing.notificationIds);
     next.notificationIds = await scheduleItemNotifications(next);
     try {

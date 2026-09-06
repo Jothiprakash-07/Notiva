@@ -18,11 +18,14 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import ReminderCard from "../../../components/home/ReminderCard";
+import ActionRequiredCard from "../../../components/home/ActionRequiredCard";
 import StatsCard from "../../../components/home/StatsCard";
 import CreateTypeSheet from "../../../components/home/CreateTypeSheet";
+import { useAuth } from "../../../contexts/AuthContext";
 
 import {
   getItems,
+  resolveItemAction,
   toggleComplete,
 } from "../../../services/itemStorage";
 
@@ -34,11 +37,27 @@ import {
   isCountedAsOverdue,
   withCalculatedStatus,
 } from "../../../utils/itemStatus";
+import { isActionRequired, sortItemsByStatus } from "../../../utils/itemSorting";
 
 // Status card icons.
 const totalIcon = require("../../../assets/icon/status/solar.png");
 const doneIcon = require("../../../assets/icon/status/hugeicons.png");
 const overdueIcon = require("../../../assets/icon/status/fluent_cursor.png");
+
+function getGreeting(date: Date) {
+  const hour = date.getHours();
+  if (hour >= 5 && hour < 12) return "Good morning";
+  if (hour >= 12 && hour < 17) return "Good afternoon";
+  if (hour >= 17 && hour < 22) return "Good evening";
+  return "Good night";
+}
+
+function getInitials(fullName: string) {
+  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "U";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+}
 
 type DateFilter =
   | "Today"
@@ -157,6 +176,8 @@ function matchesDateFilter(
 }
 
 export default function HomeScreen() {
+  const { session } = useAuth();
+  const [currentDate, setCurrentDate] = useState(() => new Date());
   const [searchText, setSearchText] =
     useState("");
 
@@ -169,21 +190,26 @@ export default function HomeScreen() {
   const [showCreate, setShowCreate] =
     useState(false);
 
+  React.useEffect(() => {
+    const timer = setInterval(() => setCurrentDate(new Date()), 30_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const fullName = session?.user.fullName.trim() || "User";
+  const avatarInitials = getInitials(fullName);
+
+  const loadItems = useCallback(async () => {
+    const stored = await getItems();
+    setItems(stored.map((item) => withCalculatedStatus(item)));
+  }, []);
+
   useFocusEffect(
     useCallback(() => {
       let active = true;
 
       const refresh = async () => {
         try {
-          const stored = await getItems();
-
-          if (active) {
-            setItems(
-              stored.map((item) =>
-                withCalculatedStatus(item)
-              )
-            );
-          }
+          if (active) await loadItems();
         } catch {
           if (active) {
             Alert.alert(
@@ -210,7 +236,7 @@ export default function HomeScreen() {
         active = false;
         clearInterval(timer);
       };
-    }, [])
+    }, [loadItems])
   );
 
   const filteredReminders =
@@ -220,7 +246,7 @@ export default function HomeScreen() {
 
       const now = new Date();
 
-      return items.filter((reminder) => {
+      return sortItemsByStatus(items.filter((reminder) => {
         const dateMatches =
           matchesDateFilter(
             reminder.startAt,
@@ -250,12 +276,17 @@ export default function HomeScreen() {
             .toLowerCase()
             .includes(search)
         );
-      });
+      }), now);
     }, [
       items,
       searchText,
       dateFilter,
     ]);
+
+  const actionRequiredItems = useMemo(
+    () => sortItemsByStatus(items.filter((item) => isActionRequired(item))),
+    [items]
+  );
 
   const totalCount =
     items.length;
@@ -273,7 +304,8 @@ export default function HomeScreen() {
   const handleToggle =
     async (id: string) => {
       try {
-        await toggleComplete(id);
+        const updated = await toggleComplete(id);
+        if (!updated?.completed) throw new Error("Item could not be completed.");
 
         const stored =
           await getItems();
@@ -290,6 +322,15 @@ export default function HomeScreen() {
         );
       }
     };
+
+  const handleSkip = async (id: string) => {
+    try {
+      await resolveItemAction(id);
+      await loadItems();
+    } catch {
+      Alert.alert("Could not skip item", "Please try again.");
+    }
+  };
 
   return (
     <SafeAreaView
@@ -313,21 +354,21 @@ export default function HomeScreen() {
               allowFontScaling={false}
               style={styles.greeting}
             >
-              Good morning,
+              {getGreeting(currentDate)},
             </Text>
 
             <Text
               allowFontScaling={false}
               style={styles.userName}
             >
-              Sara
+              {fullName}
             </Text>
 
             <Text
               allowFontScaling={false}
               style={styles.dateText}
             >
-              {new Date().toLocaleDateString(
+              {currentDate.toLocaleDateString(
                 undefined,
                 {
                   weekday: "long",
@@ -344,7 +385,7 @@ export default function HomeScreen() {
               allowFontScaling={false}
               style={styles.avatarText}
             >
-              SA
+              {avatarInitials}
             </Text>
           </View>
         </View>
@@ -357,6 +398,9 @@ export default function HomeScreen() {
               count={totalCount}
               label="Total"
               variant="total"
+              onPress={() =>
+                router.push({ pathname: "/(tabs)/reminders", params: { filter: "all" } })
+              }
             />
 
             <StatsCard
@@ -364,6 +408,9 @@ export default function HomeScreen() {
               count={doneCount}
               label="Done"
               variant="done"
+              onPress={() =>
+                router.push({ pathname: "/(tabs)/reminders", params: { filter: "done" } })
+              }
             />
 
             <StatsCard
@@ -371,6 +418,9 @@ export default function HomeScreen() {
               count={overdueCount}
               label="Overdue"
               variant="overdue"
+              onPress={() =>
+                router.push({ pathname: "/(tabs)/reminders", params: { filter: "overdue" } })
+              }
             />
           </View>
 
@@ -493,6 +543,32 @@ export default function HomeScreen() {
               }
               keyboardShouldPersistTaps="handled"
             >
+              {actionRequiredItems.length > 0 ? (
+                <View style={styles.actionSection}>
+                  <Text style={styles.actionTitle}>Action Required</Text>
+                  <Text style={styles.actionHint}>Swipe right to mark done or left for options.</Text>
+                  {actionRequiredItems.map((item) => {
+                    const shown = displayItem(item);
+                    return (
+                      <ActionRequiredCard
+                        key={`action-${item.id}`}
+                        id={item.id}
+                        title={item.title}
+                        time={shown.time}
+                        date={shown.date}
+                        category={item.category}
+                        priority={item.priority}
+                        status={getItemStatus(item)}
+                        type={item.type}
+                        onPress={() => router.push(`/screens/details/${item.id}` as any)}
+                        onDone={() => handleToggle(item.id)}
+                        onSkip={() => handleSkip(item.id)}
+                        onReschedule={() => router.push({ pathname: "/screens/create/[type]", params: { type: item.type, id: item.id, mode: "reschedule" } })}
+                      />
+                    );
+                  })}
+                </View>
+              ) : null}
               {filteredReminders.length >
               0 ? (
                 filteredReminders.map(
@@ -795,6 +871,29 @@ const styles = StyleSheet.create({
     flexGrow: 0,
     paddingTop: 2,
     paddingBottom: 110,
+  },
+
+  actionSection: {
+    marginBottom: 14,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: "#f3efff",
+    borderWidth: 1,
+    borderColor: "#ddd6fe",
+  },
+
+  actionTitle: {
+    color: "#4d3fe6",
+    fontSize: 16,
+    fontWeight: "900",
+  },
+
+  actionHint: {
+    color: "#6b7280",
+    fontSize: 11,
+    fontWeight: "600",
+    marginTop: 3,
+    marginBottom: 10,
   },
 
   emptyBox: {

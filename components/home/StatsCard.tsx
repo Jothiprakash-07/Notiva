@@ -1,10 +1,11 @@
-import { Image, ImageSourcePropType, StyleSheet, Text, View } from "react-native";
+import { Image, ImageSourcePropType, Pressable, StyleSheet, Text } from "react-native";
 
 type StatsCardProps = {
   icon: ImageSourcePropType;
   count: number;
   label: string;
   variant: "total" | "done" | "overdue";
+  onPress: () => void;
 };
 
 export default function StatsCard({
@@ -12,6 +13,7 @@ export default function StatsCard({
   count,
   label,
   variant,
+  onPress,
 }: StatsCardProps) {
   const countColor =
     variant === "done"
@@ -21,7 +23,12 @@ export default function StatsCard({
       : "#4d3fe6";
 
   return (
-    <View style={styles.card}>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`View ${label.toLowerCase()} items`}
+      style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
+      onPress={onPress}
+    >
       <Image source={icon} style={styles.icon} resizeMode="contain" />
 
       <Text allowFontScaling={false} style={[styles.count, { color: countColor }]}>
@@ -31,7 +38,7 @@ export default function StatsCard({
       <Text allowFontScaling={false} style={styles.label}>
         {label}
       </Text>
-    </View>
+    </Pressable>
   );
 }
 
@@ -51,6 +58,10 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 3 },
     elevation: 3,
+  },
+
+  cardPressed: {
+    opacity: 0.82,
   },
 
   icon: {
