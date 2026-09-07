@@ -1,3 +1,4 @@
+import { formatDate, formatTime } from "../../utils/dateFormat";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
@@ -33,12 +34,8 @@ function displayItem(item: ReminderItem) {
   return {
     time: item.allDay
       ? "All day"
-      : start.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-    date: start.toLocaleDateString([], {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    }),
+      : formatTime(start),
+    date: formatDate(start, "shortYear"),
   };
 }
 

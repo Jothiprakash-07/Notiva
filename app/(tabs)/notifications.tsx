@@ -1,11 +1,13 @@
+import { formatDate, formatTime } from "../../utils/dateFormat";
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { router, useFocusEffect } from "expo-router";
+import { useFocusEffect } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
 import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import ActionRequiredCard from "../../components/home/ActionRequiredCard";
-import { getItems, resolveItemAction, toggleComplete } from "../../services/itemStorage";
+import ReminderCard from "../../components/home/ReminderCard";
+import ActionRequiredStack from "../../components/home/ActionRequiredStack";
+import { getItems } from "../../services/itemStorage";
 import { ReminderItem } from "../../types/item";
 import { getItemStatus, withCalculatedStatus } from "../../utils/itemStatus";
 import { isActionRequired, sortItemsByStatus } from "../../utils/itemSorting";
@@ -13,12 +15,13 @@ import { isActionRequired, sortItemsByStatus } from "../../utils/itemSorting";
 function displayItem(item: ReminderItem) {
   const start = new Date(item.startAt);
   return {
-    time: item.allDay ? "All day" : start.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-    date: start.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" }),
+    time: item.allDay ? "All day" : formatTime(start),
+    date: formatDate(start, "shortYear"),
   };
 }
 
 export default function NotificationsScreen() {
+  const [stackId, setStackId] = useState<string | null>(null);
   const [items, setItems] = useState<ReminderItem[]>([]);
   const refresh = useCallback(async () => {
     const stored = await getItems();
@@ -43,24 +46,6 @@ export default function NotificationsScreen() {
   }, []));
 
   const actionItems = useMemo(() => sortItemsByStatus(items.filter((item) => isActionRequired(item))), [items]);
-  const markDone = async (id: string) => {
-    try {
-      const updated = await toggleComplete(id);
-      if (!updated?.completed) throw new Error("Item could not be completed.");
-      await refresh();
-    } catch {
-      Alert.alert("Could not complete item", "Please try again.");
-    }
-  };
-  const skip = async (id: string) => {
-    try {
-      await resolveItemAction(id);
-      await refresh();
-    } catch {
-      Alert.alert("Could not skip item", "Please try again.");
-    }
-  };
-
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
       <View style={styles.header}>
@@ -69,15 +54,13 @@ export default function NotificationsScreen() {
       </View>
       <ScrollView style={styles.list} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         {actionItems.length ? <>
-          <Text style={styles.hint}>Swipe right to mark done or left to reschedule or skip.</Text>
+          <Text style={styles.hint}>Tap an item to review it in the Action Required stack.</Text>
           {actionItems.map((item) => {
             const shown = displayItem(item);
-            return <ActionRequiredCard
+            return <ReminderCard
               key={item.id} id={item.id} title={item.title} time={shown.time} date={shown.date}
               category={item.category} priority={item.priority} status={getItemStatus(item)} type={item.type}
-              onPress={() => router.push(`/screens/details/${item.id}` as any)}
-              onDone={() => markDone(item.id)} onSkip={() => skip(item.id)}
-              onReschedule={() => router.push({ pathname: "/screens/create/[type]", params: { type: item.type, id: item.id, mode: "reschedule" } })}
+              onPress={() => setStackId(item.id)}
             />;
           })}
         </> : <View style={styles.emptyBox}>
@@ -86,6 +69,7 @@ export default function NotificationsScreen() {
           <Text style={styles.emptyText}>Missed reminders and overdue tasks that need attention will appear here.</Text>
         </View>}
       </ScrollView>
+      {stackId !== null && <ActionRequiredStack items={items} initialId={stackId} onClose={() => setStackId(null)} onChanged={refresh} />}
     </SafeAreaView>
   );
 }

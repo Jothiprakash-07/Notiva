@@ -50,7 +50,7 @@ export default function NewReminderScreen() {
     console.log("Reminder:", {
       title,
       description,
-      date: "Jun 15, 2026",
+      date: "15 June 2026",
       time: "09:30 AM",
       priority,
       repeat,
@@ -171,7 +171,7 @@ export default function NewReminderScreen() {
                 allowFontScaling={false}
                 style={styles.whenValue}
               >
-                Jun 15, 2026
+                15 June 2026
               </Text>
             </View>
 

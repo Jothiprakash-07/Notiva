@@ -1,10 +1,11 @@
+import { formatDate, formatTime } from "../../../utils/dateFormat";
 import { priorityColors } from "../../../constants/itemColors";
 import { getItemStatus, isItemReadOnly } from "../../../utils/itemStatus";
 import DateTimePicker, { DateTimePickerEvent } from "@react-native-community/datetimepicker";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useState } from "react";
-import { Platform, Pressable, ScrollView, StatusBar, StyleSheet, Switch, Text, TextInput, View } from "react-native";
+import { Alert, Platform, Pressable, ScrollView, StatusBar, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { cancelNotifications, scheduleItemNotifications } from "../../../services/notificationService";
 import { saveItem, updateItem, getItemById, rescheduleItem } from "../../../services/itemStorage";
@@ -19,7 +20,7 @@ function combine(date: Date, time: Date) { const result = new Date(date); result
 function titleFor(type: ItemType) { return type === "reminder" ? "New Reminder" : type === "task" ? "New Task" : type === "event" ? "New Event" : "New Birthday"; }
 
 export default function CreateItemScreen() {
-  const params = useLocalSearchParams<{ type?: string; id?: string; mode?: string }>();
+  const params = useLocalSearchParams<{ type?: string; id?: string; mode?: string; returnToStack?: string }>();
   const type = (params.type || "reminder") as ItemType;
   const [title, setTitle] = useState(""); const [description, setDescription] = useState(""); const [category, setCategory] = useState("Personal"); const [priority, setPriority] = useState<Priority>("Medium");
   const [date, setDate] = useState(new Date()); const [time, setTime] = useState(new Date()); const [endDate, setEndDate] = useState(new Date()); const [endTime, setEndTime] = useState(new Date(Date.now() + 3600000));
@@ -48,7 +49,8 @@ export default function CreateItemScreen() {
       if (existing && (rescheduling || ((existing.type === "reminder" || existing.type === "task") && ["Missed", "Overdue"].includes(getItemStatus(existing))))) {
         setRescheduling(true);
         await rescheduleItem(item);
-        router.replace("/(tabs)");
+        if (params.returnToStack === "1" && router.canGoBack()) router.back();
+        else router.replace("/(tabs)");
         return;
       }
       scheduledIds = await scheduleItemNotifications(item);
@@ -62,7 +64,9 @@ export default function CreateItemScreen() {
       router.replace("/(tabs)");
     } catch (error) {
       await cancelNotifications(scheduledIds).catch(() => undefined);
-      setError(error instanceof Error ? error.message : "Could not finish saving the item. Please try again.");
+      const message = error instanceof Error ? error.message : "Could not finish saving the item. Please try again.";
+      setError(message);
+      if (rescheduling) Alert.alert("Could not reschedule item", message);
     } finally { setSaving(false); }
   };
   if (loading || locked) return <SafeAreaView style={styles.safe}><View style={styles.content}><Text style={styles.label}>{loading ? "Loading item..." : "This item cannot be edited."}</Text><Pressable style={styles.save} onPress={() => params.id ? router.replace({ pathname: "/screens/details/[id]", params: { id: params.id } }) : router.back()}><Text style={styles.saveText}>Back to details</Text></Pressable></View></SafeAreaView>;
@@ -71,8 +75,8 @@ export default function CreateItemScreen() {
     {error ? <Text style={styles.error}>{error}</Text> : null}<Text style={styles.label}>{type === "birthday" ? "Person Name" : type === "event" ? "Event Title" : "Title"}</Text><TextInput style={styles.input} value={title} onChangeText={setTitle} placeholder={type === "birthday" ? "Who has a birthday?" : "What do you need to remember?"} placeholderTextColor="#9ca3af" />
     <Text style={styles.label}>{type === "event" ? "Description" : type === "birthday" ? "Notes" : "Description"}</Text><TextInput style={[styles.input, styles.multiline]} value={type === "birthday" ? notes : description} onChangeText={type === "birthday" ? setNotes : setDescription} multiline placeholder="Add details..." placeholderTextColor="#9ca3af" />
     {type === "event" ? <View style={styles.switchRow}><Text style={styles.label}>All Day</Text><Switch value={allDay} onValueChange={setAllDay} trackColor={{ true: "#4d3fe6" }} /></View> : null}
-    <Text style={styles.section}>When</Text><View style={styles.whenRow}><Pressable style={styles.when} onPress={() => setPicker("date")}><Ionicons name="calendar-outline" size={20} color="#4d3fe6" /><Text style={styles.whenText}>{date.toLocaleDateString()}</Text></Pressable><Pressable style={styles.when} onPress={() => setPicker("time")} disabled={allDay}><Ionicons name="time-outline" size={20} color={allDay ? "#c5c5cc" : "#4d3fe6"} /><Text style={styles.whenText}>{allDay ? "All day" : time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</Text></Pressable></View>
-    {type === "event" ? <><Text style={styles.label}>End</Text><View style={styles.whenRow}><Pressable style={styles.when} onPress={() => setPicker("endDate")}><Ionicons name="calendar-outline" size={20} color="#4d3fe6" /><Text style={styles.whenText}>{endDate.toLocaleDateString()}</Text></Pressable><Pressable style={styles.when} onPress={() => setPicker("endTime")} disabled={allDay}><Ionicons name="time-outline" size={20} color={allDay ? "#c5c5cc" : "#4d3fe6"} /><Text style={styles.whenText}>{allDay ? "All day" : endTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</Text></Pressable></View><TextInput style={styles.input} value={location} onChangeText={setLocation} placeholder="Location (optional)" placeholderTextColor="#9ca3af" /><TextInput style={styles.input} value={notes} onChangeText={setNotes} placeholder="Notes (optional)" placeholderTextColor="#9ca3af" /></> : null}
+    <Text style={styles.section}>When</Text><View style={styles.whenRow}><Pressable style={styles.when} onPress={() => setPicker("date")}><Ionicons name="calendar-outline" size={20} color="#4d3fe6" /><Text style={styles.whenText}>{formatDate(date, "compact")}</Text></Pressable><Pressable style={styles.when} onPress={() => setPicker("time")} disabled={allDay}><Ionicons name="time-outline" size={20} color={allDay ? "#c5c5cc" : "#4d3fe6"} /><Text style={styles.whenText}>{allDay ? "All day" : formatTime(time)}</Text></Pressable></View>
+    {type === "event" ? <><Text style={styles.label}>End</Text><View style={styles.whenRow}><Pressable style={styles.when} onPress={() => setPicker("endDate")}><Ionicons name="calendar-outline" size={20} color="#4d3fe6" /><Text style={styles.whenText}>{formatDate(endDate, "compact")}</Text></Pressable><Pressable style={styles.when} onPress={() => setPicker("endTime")} disabled={allDay}><Ionicons name="time-outline" size={20} color={allDay ? "#c5c5cc" : "#4d3fe6"} /><Text style={styles.whenText}>{allDay ? "All day" : formatTime(endTime)}</Text></Pressable></View><TextInput style={styles.input} value={location} onChangeText={setLocation} placeholder="Location (optional)" placeholderTextColor="#9ca3af" /><TextInput style={styles.input} value={notes} onChangeText={setNotes} placeholder="Notes (optional)" placeholderTextColor="#9ca3af" /></> : null}
     {type !== "birthday" && type !== "event" ? <><Text style={styles.section}>Priority</Text><View style={styles.chips}>{(["High", "Medium", "Low"] as Priority[]).map((value) => <Pressable key={value} accessibilityRole="radio" accessibilityState={{ checked: priority === value }} style={[styles.chip, { backgroundColor: priorityColors[value].backgroundColor, borderColor: priority === value ? priorityColors[value].color : "transparent", borderWidth: 2 }]} onPress={() => setPriority(value)}><Text style={[styles.chipText, { color: priorityColors[value].color }]}>{value}</Text></Pressable>)}</View></> : null}
     {type !== "birthday" ? <><Text style={styles.section}>Repeat</Text><View style={styles.chips}>{repeatOptions.map((value) => <Pressable key={value.value} style={[styles.chip, repeat === value.value && styles.active]} onPress={() => setRepeat(value.value)}><Text style={repeat === value.value ? styles.activeText : styles.chipText}>{value.label}</Text></Pressable>)}</View></> : <Text style={styles.helper}>Birthday repeats yearly automatically.</Text>}
     <Text style={styles.section}>Alert Before</Text><View style={styles.chips}>{shownAlerts.map((value) => <Pressable key={value.label} style={[styles.chip, alertBefore.label === value.label && styles.active]} onPress={() => setAlertBefore(value)}><Text style={alertBefore.label === value.label ? styles.activeText : styles.chipText}>{value.label}</Text></Pressable>)}</View>

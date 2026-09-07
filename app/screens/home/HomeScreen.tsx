@@ -1,3 +1,5 @@
+import { formatDate, formatTime } from "../../../utils/dateFormat";
+import { shouldAutoOpenActionRequired } from "../../../utils/actionRequiredSession";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { router, useFocusEffect } from "expo-router";
 import React, {
@@ -7,6 +9,7 @@ import React, {
 } from "react";
 import {
   Alert,
+  AppState,
   Pressable,
   ScrollView,
   StatusBar,
@@ -18,14 +21,13 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import ReminderCard from "../../../components/home/ReminderCard";
-import ActionRequiredCard from "../../../components/home/ActionRequiredCard";
+import ActionRequiredStack from "../../../components/home/ActionRequiredStack";
 import StatsCard from "../../../components/home/StatsCard";
 import CreateTypeSheet from "../../../components/home/CreateTypeSheet";
 import { useAuth } from "../../../contexts/AuthContext";
 
 import {
   getItems,
-  resolveItemAction,
   toggleComplete,
 } from "../../../services/itemStorage";
 
@@ -80,15 +82,9 @@ function displayItem(item: ReminderItem) {
   return {
     time: item.allDay
       ? "All day"
-      : start.toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-        }),
+      : formatTime(start),
 
-    date: start.toLocaleDateString([], {
-      month: "short",
-      day: "numeric",
-    }),
+    date: formatDate(start, "short"),
   };
 }
 
@@ -184,6 +180,8 @@ export default function HomeScreen() {
   const [dateFilter, setDateFilter] =
     useState<DateFilter>("Today");
 
+  const [showActions, setShowActions] = useState(false);
+
   const [items, setItems] =
     useState<ReminderItem[]>([]);
 
@@ -209,7 +207,11 @@ export default function HomeScreen() {
 
       const refresh = async () => {
         try {
-          if (active) await loadItems();
+          const stored = await getItems();
+          if (active) {
+            setItems(stored.map((item) => withCalculatedStatus(item)));
+            if (shouldAutoOpenActionRequired(stored)) setShowActions(true);
+          }
         } catch {
           if (active) {
             Alert.alert(
@@ -221,6 +223,14 @@ export default function HomeScreen() {
       };
 
       void refresh();
+      let wasBackgrounded = AppState.currentState === "background";
+      const subscription = AppState.addEventListener("change", (next) => {
+        if (next === "background") wasBackgrounded = true;
+        if (next === "active" && wasBackgrounded) {
+          wasBackgrounded = false;
+          void refresh();
+        }
+      });
 
       const timer = setInterval(() => {
         if (active) {
@@ -234,9 +244,10 @@ export default function HomeScreen() {
 
       return () => {
         active = false;
+        subscription.remove();
         clearInterval(timer);
       };
-    }, [loadItems])
+    }, [])
   );
 
   const filteredReminders =
@@ -323,14 +334,6 @@ export default function HomeScreen() {
       }
     };
 
-  const handleSkip = async (id: string) => {
-    try {
-      await resolveItemAction(id);
-      await loadItems();
-    } catch {
-      Alert.alert("Could not skip item", "Please try again.");
-    }
-  };
 
   return (
     <SafeAreaView
@@ -368,15 +371,7 @@ export default function HomeScreen() {
               allowFontScaling={false}
               style={styles.dateText}
             >
-              {currentDate.toLocaleDateString(
-                undefined,
-                {
-                  weekday: "long",
-                  month: "long",
-                  day: "numeric",
-                  year: "numeric",
-                }
-              )}
+              {`${currentDate.toLocaleDateString("en-GB", { weekday: "long" })}, ${formatDate(currentDate)}`}
             </Text>
           </View>
 
@@ -544,30 +539,10 @@ export default function HomeScreen() {
               keyboardShouldPersistTaps="handled"
             >
               {actionRequiredItems.length > 0 ? (
-                <View style={styles.actionSection}>
-                  <Text style={styles.actionTitle}>Action Required</Text>
-                  <Text style={styles.actionHint}>Swipe right to mark done or left for options.</Text>
-                  {actionRequiredItems.map((item) => {
-                    const shown = displayItem(item);
-                    return (
-                      <ActionRequiredCard
-                        key={`action-${item.id}`}
-                        id={item.id}
-                        title={item.title}
-                        time={shown.time}
-                        date={shown.date}
-                        category={item.category}
-                        priority={item.priority}
-                        status={getItemStatus(item)}
-                        type={item.type}
-                        onPress={() => router.push(`/screens/details/${item.id}` as any)}
-                        onDone={() => handleToggle(item.id)}
-                        onSkip={() => handleSkip(item.id)}
-                        onReschedule={() => router.push({ pathname: "/screens/create/[type]", params: { type: item.type, id: item.id, mode: "reschedule" } })}
-                      />
-                    );
-                  })}
-                </View>
+                <Pressable accessibilityRole="button" accessibilityLabel={`Open ${actionRequiredItems.length} Action Required items`} style={styles.actionSection} onPress={() => setShowActions(true)}>
+                  <Text style={styles.actionTitle}>Action Required · {actionRequiredItems.length}</Text>
+                  <Text style={styles.actionHint}>Review missed reminders and overdue tasks →</Text>
+                </Pressable>
               ) : null}
               {filteredReminders.length >
               0 ? (
@@ -665,6 +640,8 @@ export default function HomeScreen() {
           </Text>
         </Pressable>
       </View>
+
+      {showActions && <ActionRequiredStack items={items} onClose={() => setShowActions(false)} onChanged={loadItems} />}
 
       <CreateTypeSheet
         visible={showCreate}

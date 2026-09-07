@@ -100,7 +100,9 @@ export function rescheduleItem(item: ReminderItem) {
     }
     const next: ReminderItem = { ...item, id: existing.id, type: existing.type, createdAt: existing.createdAt, completed: false, actionResolved: false, status: undefined, notificationIds: [], updatedAt: new Date().toISOString() };
     await cancelNotifications(existing.notificationIds);
-    next.notificationIds = await scheduleItemNotifications(next);
+    // Keep the original date and unresolved state on failure, without retaining cancelled IDs.
+    await persist(items.map((current) => current.id === existing.id ? { ...existing, notificationIds: [] } : current));
+    next.notificationIds = await scheduleItemNotifications(next, true);
     try {
       await persist(items.map((current) => current.id === existing.id ? next : current));
     } catch (error) {

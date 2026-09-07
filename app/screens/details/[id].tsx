@@ -1,3 +1,4 @@
+import { formatDate, formatTime } from "../../../utils/dateFormat";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { router, useLocalSearchParams, useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
@@ -52,9 +53,9 @@ export default function DetailsScreen() {
         </View>
         <View style={styles.infoGroup}>
           {item.description ? <Info label="Description" value={item.description} /> : null}
-          <Info label="Date" value={new Date(item.startAt).toLocaleDateString()} />
-          <Info label="Time" value={item.allDay ? "All day" : new Date(item.startAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} />
-          {item.endAt ? <Info label="End" value={new Date(item.endAt).toLocaleString()} /> : null}
+          <Info label="Date" value={formatDate(new Date(item.startAt))} />
+          <Info label="Time" value={item.allDay ? "All day" : formatTime(new Date(item.startAt))} />
+          {item.endAt ? <Info label="End" value={`${formatDate(new Date(item.endAt))} • ${formatTime(new Date(item.endAt))}`} /> : null}
           <Info label="Category" value={item.category} />
           {item.priority ? <View style={styles.info}><Text style={styles.label}>Priority</Text><Text style={[styles.badge, priorityColors[item.priority]]}>{item.priority}</Text></View> : null}
           <Info label="Repeat" value={item.repeat} />

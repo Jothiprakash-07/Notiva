@@ -1,3 +1,4 @@
+/* global __dirname */
 // Run with node scripts/test-reminders.cjs. Native APIs are mocked; delivery requires a device.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -36,7 +37,7 @@ function harness() {
     }, { filename: file });
     return module.exports;
   }
-  return { load, scheduled, cancelled, alerts, notifications, setPermission: (p) => { permission = p; }, requests: () => requests, handler: () => handler, reloadStorage: () => { cache.delete(path.join(root, 'services/itemStorage.ts')); return load('services/itemStorage.ts'); } };
+  return { filesystem, load, scheduled, cancelled, alerts, notifications, setPermission: (p) => { permission = p; }, requests: () => requests, handler: () => handler, reloadStorage: () => { cache.delete(path.join(root, 'services/itemStorage.ts')); return load('services/itemStorage.ts'); } };
 }
 (async () => {
   const h = harness(); const service = h.load('services/notificationService.ts'); const status = h.load('utils/itemStatus.ts');
@@ -72,7 +73,6 @@ function harness() {
   for (const type of ['reminder', 'task']) {
     const overdue = { ...item, id: 'reschedule-' + type, type, startAt: new Date(now - 60000).toISOString(), status: type === 'task' ? 'Overdue' : 'Missed', notificationIds: ['old-' + type] };
     await storage.saveItem(overdue);
-    await storage.toggleComplete(overdue.id);
     assert.equal((await storage.getItemById(overdue.id)).completed, false);
     await assert.rejects(storage.rescheduleItem(overdue), /future/);
     const count = (await storage.getItems()).length;
@@ -94,7 +94,52 @@ function harness() {
     await storage.toggleComplete(updated.id);
     await assert.rejects(storage.rescheduleItem(updated), /cannot be rescheduled/);
   }
-  console.log('PASS: Missed/Overdue completion blocked; reschedule preserves ID/count, cancels first, resets stale status, stores new IDs, validates future dates, and rejects Done items.');
+  const sorting = h.load('utils/itemSorting.ts');
+  const late = { ...item, id: 'late', startAt: new Date(now - 60000).toISOString() };
+  assert.equal(sorting.isActionRequired(late), true, 'Old items without actionResolved remain eligible');
+  for (const type of ['event', 'birthday']) assert.equal(sorting.isActionRequired({ ...late, type }), false);
+  assert.equal(sorting.isActionRequired({ ...late, completed: true }), false);
+  assert.equal(sorting.isActionRequired({ ...late, actionResolved: true }), false);
+  for (const type of ['reminder', 'task']) {
+    const skipped = { ...late, id: 'skip-' + type, type };
+    await storage.saveItem(skipped);
+    await storage.resolveItemAction(skipped.id);
+    const saved = await h.reloadStorage().getItemById(skipped.id);
+    assert.equal(saved.completed, false);
+    assert.equal(status.getItemStatus(saved), type === 'task' ? 'Overdue' : 'Missed');
+    assert.equal(saved.actionResolved, true);
+    assert.equal(sorting.isActionRequired(saved), false);
+    const done = { ...skipped, id: 'done-' + type };
+    await storage.saveItem(done);
+    await storage.toggleComplete(done.id);
+    assert.equal(status.getItemStatus(await storage.getItemById(done.id)), 'Done');
+  }
+  const ordered = sorting.sortItemsByStatus([{ ...item, id: 'done', completed: true }, late, { ...item, id: 'pending' }]);
+  assert.equal(ordered.map(value => value.id).join(','), 'pending,late,done');
+  const write = h.filesystem.File.prototype.write;
+  await storage.saveItem(late);
+  for (const action of [() => storage.toggleComplete(late.id), () => storage.resolveItemAction(late.id), () => storage.deleteItem(late.id)]) {
+    h.filesystem.File.prototype.write = () => { throw new Error('disk full'); };
+    await assert.rejects(action(), /disk full/);
+    h.filesystem.File.prototype.write = write;
+    assert.equal(sorting.isActionRequired(await storage.getItemById(late.id)), true);
+  }
+  const schedule = h.notifications.scheduleNotificationAsync;
+  h.notifications.scheduleNotificationAsync = async () => { throw new Error('native scheduling failure'); };
+  await assert.rejects(storage.rescheduleItem({ ...late, startAt: item.startAt }), /notification/);
+  h.notifications.scheduleNotificationAsync = schedule;
+  assert.equal(sorting.isActionRequired(await storage.getItemById(late.id)), true);
+  assert.equal((await storage.getItemById(late.id)).notificationIds.length, 0);
+  let writes = 0;
+  h.filesystem.File.prototype.write = function(value) { if (++writes === 2) throw new Error('final save failed'); write.call(this, value); };
+  await assert.rejects(storage.rescheduleItem({ ...late, startAt: item.startAt }), /final save failed/);
+  h.filesystem.File.prototype.write = write;
+  assert.equal(sorting.isActionRequired(await storage.getItemById(late.id)), true);
+  assert.ok(h.cancelled.includes('id-' + h.scheduled.length), 'Cancel new notification after failed final save');
+  await storage.deleteItem(late.id);
+  assert.equal(await h.reloadStorage().getItemById(late.id), undefined);
+  console.log('PASS: Action Required eligibility, old-data compatibility, Done, Skip, Delete, restart persistence, sorting and injected write/scheduling failures.');
+  console.log('PASS: Reschedule preserves ID/count, cancels first, resets stale status, stores new IDs, validates future dates, and rejects Done items.');
   h.setPermission({ granted: false, canAskAgain: false, status: 'denied' }); assert.equal(await service.prepareNotifications(), false); assert.equal(h.requests(), 0); assert.ok(h.alerts.length);
   h.setPermission({ granted: false, canAskAgain: true, status: 'denied' }); await service.prepareNotifications(); await service.prepareNotifications(); assert.equal(h.requests(), 1);
   console.log('PASS: schedule dates/offsets, five-second trigger, channel/handler/content, native persistence reload, read-only guards, cancellation, denied permission and prompt throttling (mocked native APIs).');

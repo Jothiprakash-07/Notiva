@@ -88,7 +88,7 @@ export function createTriggers(item: ReminderItem): Notifications.SchedulableNot
   }
 }
 
-export async function scheduleItemNotifications(item: ReminderItem): Promise<string[]> {
+export async function scheduleItemNotifications(item: ReminderItem, requireSuccess = false): Promise<string[]> {
   if (isItemReadOnly(item)) return [];
   const ids: string[] = [];
   try {
@@ -96,10 +96,14 @@ export async function scheduleItemNotifications(item: ReminderItem): Promise<str
     debug({ title: item.title, startAt: item.startAt, alertMinutes: item.alertBefore.minutes, scheduledFor: scheduledFor.toString(), currentTime: new Date().toString() });
     const triggers = createTriggers(item);
     if (!triggers.length) {
+      if (requireSuccess) throw new Error("Choose a future notification time.");
       Alert.alert("Alert time has passed", "This item will be saved without a notification. Choose a future alert time to receive a reminder.");
       return [];
     }
-    if (!(await prepareNotifications())) return [];
+    if (!(await prepareNotifications())) {
+      if (requireSuccess) throw new Error("Enable local notifications before rescheduling this item.");
+      return [];
+    }
     for (const trigger of triggers) {
       const id = await Notifications.scheduleNotificationAsync({
         content: {
@@ -114,6 +118,7 @@ export async function scheduleItemNotifications(item: ReminderItem): Promise<str
     return ids;
   } catch (error) {
     await cancelNotifications(ids).catch((failure) => console.warn("Notification cleanup failed", failure));
+    if (requireSuccess) throw new Error("Could not schedule the new notification. Check notification permissions and Alarms & reminders settings, then try again.");
     console.warn("Failed to schedule notification:", error);
     Alert.alert("Reminder alert unavailable", "The item can be saved, but its alert could not be scheduled. Check notification and Alarms & reminders permissions in device settings, then edit the item to try again.");
     return [];
