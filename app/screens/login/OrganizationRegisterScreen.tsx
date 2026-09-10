@@ -21,7 +21,7 @@ const popupLogo = require("../../../assets/images/Blue-logo.png");
 // IMPORTANT:
 // Expo mobile app-la localhost work aagathu.
 // Phone browser-la backend open panna use panna same laptop IP-a inga podunga.
-const API_BASE_URL = "http://192.168.1.239:5000";
+const API_BASE_URL = "http://192.168.43.159:5000";
 
 type OrganizationRegisterScreenProps = {
   onBack?: () => void;

@@ -125,8 +125,6 @@ export default function ActionRequiredStack({ items, initialId, onClose, onChang
     }), [focused, menu, busy, dragX, snapBack]);
   // The scroll view waits for horizontal intent to fail; vertical movement releases it.
   const bodyScrollGesture = useMemo(() => Gesture.Native().requireExternalGestureToFail(panGesture), [panGesture]);
-  // Button touches belong to the button, not the surrounding pan recognizer.
-  const actionTapGesture = useMemo(() => Gesture.Native().shouldActivateOnStart(true).disallowInterruption(true), []);
   const confirm = (action: "done" | "delete") => {
     setMenu(false);
     Alert.alert(action === "done" ? "Mark as Done?" : "Delete this item?", front.title, [
@@ -156,6 +154,8 @@ export default function ActionRequiredStack({ items, initialId, onClose, onChang
                 { scale: progress.interpolate({ inputRange: [0, 1], outputRange: [1 - index * 0.045, 1 - Math.max(0, index - 1) * 0.045] }) },
               ] }]}>
               {isFront ? <>
+                {/* Keep the entire scrollable body swipeable without capturing Action touches. */}
+                <GestureDetector gesture={panGesture}><View collapsable={false}>
                 <GestureDetector gesture={bodyScrollGesture}><ScrollView style={{ maxHeight: Math.max(120, height - 350) }} contentContainerStyle={styles.content}>
                   <Text style={[styles.badge, statusColors[getItemStatus(item)]]}>{getItemStatus(item)}</Text>
                   <Text style={styles.title}>{item.title}</Text>
@@ -164,13 +164,14 @@ export default function ActionRequiredStack({ items, initialId, onClose, onChang
                   <Text style={styles.description}>{item.description || "No description"}</Text>
                   <View style={styles.tags}>{item.category ? <Text style={styles.category}>{item.category}</Text> : null}{item.priority ? <Text style={[styles.badge, priorityColors[item.priority]]}>{item.priority}</Text> : null}</View>
                 </ScrollView></GestureDetector>
+                </View></GestureDetector>
                 <View style={styles.buttons}>
-                  <GestureDetector gesture={actionTapGesture}><Pressable accessibilityRole="button" accessibilityState={{ busy, disabled: busy }} disabled={busy} style={[styles.button, styles.primary]} onPress={() => setMenu(true)}><Text style={styles.primaryText}>Action</Text></Pressable></GestureDetector>
+                  <Pressable accessibilityRole="button" accessibilityState={{ busy, disabled: busy }} disabled={busy} style={[styles.button, styles.primary]} onPress={() => setMenu(true)}><Text style={styles.primaryText}>Action</Text></Pressable>
                 </View>
                 <Text style={styles.swipeHint}>Swipe left or right to dismiss for now</Text>
               </> : <Text numberOfLines={1} style={styles.preview}>{item.title}</Text>}
             </Animated.View>;
-            return isFront ? <GestureDetector key={item.id} gesture={panGesture}>{card}</GestureDetector> : <Fragment key={item.id}>{card}</Fragment>;
+            return <Fragment key={item.id}>{card}</Fragment>;
           })}
         </View>
         {menu ? <View style={[styles.menu, { maxHeight: Math.max(180, height - 160) }]} accessibilityViewIsModal>

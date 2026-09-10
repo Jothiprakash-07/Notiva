@@ -15,7 +15,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 // IMPORTANT:
 // Expo Go mobile app cannot use localhost.
 // Use your laptop's local IP address when testing on a physical phone.
-const API_BASE_URL = "http://192.168.1.239:5000";
+const API_BASE_URL = "http://192.168.43.159:5000";
 
 type UserRegisterScreenProps = {
   onBack?: () => void;

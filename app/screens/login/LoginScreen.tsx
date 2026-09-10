@@ -25,7 +25,7 @@ const popupLogo = require("../../../assets/images/Blue-logo.png");
 // IMPORTANT:
 // Expo mobile app cannot use localhost on a physical phone.
 // Use your laptop LAN IP address.
-const API_BASE_URL = "http://192.168.1.239:5000";
+const API_BASE_URL = "http://192.168.43.159:5000";
 
 type LoginScreenProps = {
   onUserRegister?: () => void;

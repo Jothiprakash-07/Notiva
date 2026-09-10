@@ -140,12 +140,16 @@ async function setup(count) {
     const original = JSON.stringify(items);
     const drag = { dx: direction * 130, dy: 1, numberActiveTouches: 1 };
     const fullCard = document.querySelector('[data-gesture=pan]');
-    for (const text of ['Item 0', 'Description', 'September', 'PM', 'Personal', 'Medium', 'Swipe left or right']) {
+    for (const text of ['Item 0', 'Description', 'September', 'PM', 'Personal', 'Medium']) {
       assert.ok(fullCard.textContent.includes(text), text + ' is inside the full-card pan detector');
     }
     assert.equal(document.querySelectorAll('[data-gesture=pan]').length, 1, 'Only the front card owns a pan detector');
-    const actionButton = [...fullCard.querySelectorAll('button')].find((node) => node.textContent === 'Action');
-    assert.equal(actionButton.closest('[data-gesture]').getAttribute('data-gesture'), 'native', 'Action button has an independent native touch handler');
+    const actionButton = [...document.querySelectorAll('button')].find((node) => node.textContent === 'Action');
+    assert.equal(actionButton.closest('[data-gesture]'), null, 'Action button is outside all gesture capture areas');
+    await click('Action');
+    assert.ok(document.body.textContent.includes('Choose an action'));
+    assert.equal(animations.length, 0, 'Action tap does not swipe');
+    await click('Cancel');
     assert.equal(document.querySelector('[aria-label="Close Action Required"]').closest('[data-gesture=pan]'), null, 'X is outside the swipe detector');
     assert.equal(gestures.activeOffsetX.join(','), '-10,10');
     assert.equal(gestures.failOffsetY.join(','), '-15,15');
@@ -163,6 +167,9 @@ async function setup(count) {
     assert.equal(animations.length, 0, 'Small drags do not dismiss');
     assert.equal(snaps.at(-1), 0);
     assert.ok(document.body.textContent.includes('Item 1'));
+    await click('Action');
+    assert.ok(document.body.textContent.includes('Choose an action'), 'Action works after swiping and snapping back');
+    await click('Cancel');
     for (let index = 1; index < 5; index++) {
       await act(async () => gestures.onEnd({ translationX: drag.dx }, true));
       await finish();
