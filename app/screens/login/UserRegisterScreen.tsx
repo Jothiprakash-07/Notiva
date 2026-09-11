@@ -1,5 +1,7 @@
+import Ionicons from "@expo/vector-icons/Ionicons";
 import { useState } from "react";
 import {
+  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -12,10 +14,9 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-// IMPORTANT:
-// Expo Go mobile app cannot use localhost.
-// Use your laptop's local IP address when testing on a physical phone.
-const API_BASE_URL = "http://192.168.43.159:5000";
+// Physical phone cannot use localhost.
+// Update this IP when your PC network IP changes.
+const API_BASE_URL = "http://10.151.249.42:5000";
 
 type UserRegisterScreenProps = {
   onBack?: () => void;
@@ -48,7 +49,6 @@ export default function UserRegisterScreen({
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
-  // Clear all fields after successful registration.
   const clearForm = () => {
     setFullName("");
     setEmail("");
@@ -59,7 +59,18 @@ export default function UserRegisterScreen({
     setConfirmPassword("");
   };
 
-  // Validate form fields before sending data to backend.
+  const clearFieldError = (
+    field: keyof FieldErrors
+  ) => {
+    setErrors((previous) => ({
+      ...previous,
+      [field]: undefined,
+      api: undefined,
+    }));
+
+    setSuccess("");
+  };
+
   const validateForm = () => {
     const trimmedFullName = fullName.trim();
     const trimmedEmail = email.trim();
@@ -67,47 +78,52 @@ export default function UserRegisterScreen({
 
     const newErrors: FieldErrors = {};
 
-    // Full Name validation.
     if (!trimmedFullName) {
-      newErrors.fullName = "Full name is required.";
+      newErrors.fullName =
+        "Full name is required.";
     }
 
-    // Email validation.
     if (!trimmedEmail) {
-      newErrors.email = "Email address is required.";
+      newErrors.email =
+        "Email address is required.";
     } else if (
       !trimmedEmail.includes("@") ||
       !trimmedEmail.includes(".")
     ) {
-      newErrors.email = "Please enter a valid email address.";
+      newErrors.email =
+        "Please enter a valid email address.";
     }
 
-    // Mobile Number validation.
     if (!trimmedMobileNumber) {
-      newErrors.mobileNumber = "Mobile number is required.";
+      newErrors.mobileNumber =
+        "Mobile number is required.";
     }
 
-    // Password validation.
     if (!password) {
-      newErrors.password = "Password is required.";
+      newErrors.password =
+        "Password is required.";
     } else if (password.length < 6) {
-      newErrors.password = "Password must be at least 6 characters.";
+      newErrors.password =
+        "Password must be at least 6 characters.";
     }
 
-    // Confirm Password validation.
     if (!confirmPassword) {
-      newErrors.confirmPassword = "Confirm password is required.";
-    } else if (password !== confirmPassword) {
+      newErrors.confirmPassword =
+        "Confirm password is required.";
+    } else if (
+      password !== confirmPassword
+    ) {
       newErrors.confirmPassword =
         "Password and confirm password do not match.";
     }
 
     setErrors(newErrors);
 
-    return Object.keys(newErrors).length === 0;
+    return (
+      Object.keys(newErrors).length === 0
+    );
   };
 
-  // Create a new user account.
   const handleCreateAccount = async () => {
     if (!validateForm()) {
       return;
@@ -118,17 +134,14 @@ export default function UserRegisterScreen({
       setErrors({});
       setSuccess("");
 
-      // Backend expects "fullName".
       const registerData = {
         fullName: fullName.trim(),
         email: email.trim(),
         mobileNumber: mobileNumber.trim(),
         organizationCode: organizationCode.trim(),
         department: department.trim(),
-        password: password,
+        password,
       };
-
-      console.log("User register request:", registerData);
 
       const response = await fetch(
         API_BASE_URL + "/api/auth/register",
@@ -143,23 +156,23 @@ export default function UserRegisterScreen({
 
       const data = await response.json();
 
-      console.log("User register status:", response.status);
-      console.log("User register response:", data);
-
       if (!response.ok) {
         setErrors({
-          api: data?.message || "User registration failed.",
+          api:
+            data?.message ||
+            "User registration failed.",
         });
+
         return;
       }
 
       setSuccess(
-        data?.message || "User registered successfully."
+        data?.message ||
+          "User registered successfully."
       );
 
       clearForm();
 
-      // Return to LoginScreen after registration success.
       setTimeout(() => {
         onBack?.();
       }, 900);
@@ -168,8 +181,6 @@ export default function UserRegisterScreen({
         registerError instanceof Error
           ? registerError.message
           : "User registration failed.";
-
-      console.log("User registration error:", registerError);
 
       setErrors({
         api: message,
@@ -188,349 +199,561 @@ export default function UserRegisterScreen({
 
       <KeyboardAvoidingView
         style={styles.keyboardView}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 20}
+        behavior={
+          Platform.OS === "ios"
+            ? "padding"
+            : "height"
+        }
+        keyboardVerticalOffset={
+          Platform.OS === "ios"
+            ? 0
+            : 20
+        }
       >
+        {/* Fixed header */}
+        <View style={styles.header}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+            hitSlop={10}
+            style={({ pressed }) => [
+              styles.backButton,
+              pressed &&
+                styles.backButtonPressed,
+            ]}
+            onPress={onBack}
+          >
+            <Ionicons
+              name="arrow-back"
+              size={23}
+              color="#111827"
+            />
+          </Pressable>
+
+          <Text
+            allowFontScaling={false}
+            style={styles.headerTitle}
+          >
+            Create account
+          </Text>
+
+          <View
+            style={styles.headerRightSpace}
+          />
+        </View>
+
         <ScrollView
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={
+            styles.scrollContent
+          }
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          <View style={styles.header}>
-            <Pressable onPress={onBack} hitSlop={10}>
-              <Text
-                allowFontScaling={false}
-                style={styles.backIcon}
-              >
-                ←
-              </Text>
-            </Pressable>
+          {/* Intro */}
+          <View style={styles.intro}>
+            <View style={styles.introIcon}>
+              <Ionicons
+                name="person-add-outline"
+                size={24}
+                color="#4d3fe6"
+              />
+            </View>
 
-            <Text
-              allowFontScaling={false}
-              style={styles.headerTitle}
-            >
-              Create account
-            </Text>
+            <View style={styles.introCopy}>
+              <Text style={styles.introTitle}>
+                User Registration
+              </Text>
+
+              <Text style={styles.introText}>
+                Create your account and join an
+                organization if you have a code.
+              </Text>
+            </View>
           </View>
 
-          <View style={styles.form}>
-            <Text
-              allowFontScaling={false}
-              style={styles.label}
-            >
-              Full Name*
-            </Text>
-
-            <TextInput
-              style={[
-                styles.input,
-                errors.fullName && styles.inputError,
-              ]}
-              placeholder="Enter your full name"
-              placeholderTextColor="#9f9f9f"
-              autoCapitalize="words"
-              value={fullName}
-              onChangeText={(text) => {
-                setFullName(text);
-
-                setErrors((prev) => ({
-                  ...prev,
-                  fullName: undefined,
-                  api: undefined,
-                }));
-              }}
+          {/* Personal details */}
+          <View style={styles.sectionCard}>
+            <SectionHeader
+              icon="person-outline"
+              title="Personal Details"
+              subtitle="Your basic account information"
             />
 
-            {errors.fullName ? (
-              <Text
-                allowFontScaling={false}
-                style={styles.fieldErrorText}
-              >
-                {errors.fullName}
-              </Text>
-            ) : null}
-
-            <Text
-              allowFontScaling={false}
-              style={styles.label}
-            >
-              Email Address*
-            </Text>
-
-            <TextInput
-              style={[
-                styles.input,
-                errors.email && styles.inputError,
-              ]}
-              placeholder="john.e07@gmail.com"
-              placeholderTextColor="#9f9f9f"
-              keyboardType="email-address"
-              autoCapitalize="none"
-              autoCorrect={false}
-              value={email}
-              onChangeText={(text) => {
-                setEmail(text);
-
-                setErrors((prev) => ({
-                  ...prev,
-                  email: undefined,
-                  api: undefined,
-                }));
-              }}
+            <FieldLabel
+              label="Full Name"
+              required
             />
 
-            {errors.email ? (
-              <Text
-                allowFontScaling={false}
-                style={styles.fieldErrorText}
-              >
-                {errors.email}
-              </Text>
-            ) : null}
-
-            <Text
-              allowFontScaling={false}
-              style={styles.label}
-            >
-              Mobile Number*
-            </Text>
-
-            <TextInput
-              style={[
-                styles.input,
-                errors.mobileNumber && styles.inputError,
-              ]}
-              placeholder="Enter your mobile number"
-              placeholderTextColor="#9f9f9f"
-              keyboardType="phone-pad"
-              value={mobileNumber}
-              onChangeText={(text) => {
-                setMobileNumber(text);
-
-                setErrors((prev) => ({
-                  ...prev,
-                  mobileNumber: undefined,
-                  api: undefined,
-                }));
-              }}
-            />
-
-            {errors.mobileNumber ? (
-              <Text
-                allowFontScaling={false}
-                style={styles.fieldErrorText}
-              >
-                {errors.mobileNumber}
-              </Text>
-            ) : null}
-
-            <Text
-              allowFontScaling={false}
-              style={styles.label}
-            >
-              Organization Code
-            </Text>
-
-            <TextInput
-              style={styles.input}
-              placeholder="Enter your code"
-              placeholderTextColor="#9f9f9f"
-              autoCapitalize="characters"
-              value={organizationCode}
-              onChangeText={(text) => {
-                setOrganizationCode(text);
-
-                setErrors((prev) => ({
-                  ...prev,
-                  api: undefined,
-                }));
-              }}
-            />
-
-            <Text
-              allowFontScaling={false}
-              style={styles.label}
-            >
-              Department
-            </Text>
-
-            <TextInput
-              style={styles.input}
-              placeholder="Enter your department"
-              placeholderTextColor="#9f9f9f"
-              value={department}
-              onChangeText={(text) => {
-                setDepartment(text);
-
-                setErrors((prev) => ({
-                  ...prev,
-                  api: undefined,
-                }));
-              }}
-            />
-
-            <Text
-              allowFontScaling={false}
-              style={styles.label}
-            >
-              Password*
-            </Text>
-
-            <View
-              style={[
-                styles.passwordBox,
-                errors.password && styles.inputError,
-              ]}
+            <InputBox
+              icon="person-outline"
+              error={Boolean(errors.fullName)}
             >
               <TextInput
-                style={styles.passwordInput}
-                placeholder="************"
-                placeholderTextColor="#9f9f9f"
+                style={styles.input}
+                placeholder="Enter your full name"
+                placeholderTextColor="#9ca3af"
+                autoCapitalize="words"
+                value={fullName}
+                onChangeText={(text) => {
+                  setFullName(text);
+                  clearFieldError("fullName");
+                }}
+              />
+            </InputBox>
+
+            <FieldError
+              message={errors.fullName}
+            />
+
+            <FieldLabel
+              label="Email Address"
+              required
+            />
+
+            <InputBox
+              icon="mail-outline"
+              error={Boolean(errors.email)}
+            >
+              <TextInput
+                style={styles.input}
+                placeholder="john.e07@gmail.com"
+                placeholderTextColor="#9ca3af"
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+                value={email}
+                onChangeText={(text) => {
+                  setEmail(text);
+                  clearFieldError("email");
+                }}
+              />
+            </InputBox>
+
+            <FieldError
+              message={errors.email}
+            />
+
+            <FieldLabel
+              label="Mobile Number"
+              required
+            />
+
+            <InputBox
+              icon="call-outline"
+              error={Boolean(
+                errors.mobileNumber
+              )}
+            >
+              <TextInput
+                style={styles.input}
+                placeholder="Enter your mobile number"
+                placeholderTextColor="#9ca3af"
+                keyboardType="phone-pad"
+                value={mobileNumber}
+                onChangeText={(text) => {
+                  setMobileNumber(text);
+                  clearFieldError(
+                    "mobileNumber"
+                  );
+                }}
+              />
+            </InputBox>
+
+            <FieldError
+              message={
+                errors.mobileNumber
+              }
+            />
+          </View>
+
+          {/* Organization */}
+          <View style={styles.sectionCard}>
+            <SectionHeader
+              icon="business-outline"
+              title="Organization"
+              subtitle="Optional workspace information"
+            />
+
+            <FieldLabel
+              label="Organization Code"
+              optional
+            />
+
+            <InputBox icon="key-outline">
+              <TextInput
+                style={styles.input}
+                placeholder="Enter your code"
+                placeholderTextColor="#9ca3af"
+                autoCapitalize="characters"
+                value={organizationCode}
+                onChangeText={(text) => {
+                  setOrganizationCode(text);
+                  clearFieldError("api");
+                }}
+              />
+            </InputBox>
+
+            <View style={styles.fieldGap} />
+
+            <FieldLabel
+              label="Department"
+              optional
+            />
+
+            <InputBox icon="briefcase-outline">
+              <TextInput
+                style={styles.input}
+                placeholder="Enter your department"
+                placeholderTextColor="#9ca3af"
+                value={department}
+                onChangeText={(text) => {
+                  setDepartment(text);
+                  clearFieldError("api");
+                }}
+              />
+            </InputBox>
+          </View>
+
+          {/* Security */}
+          <View style={styles.sectionCard}>
+            <SectionHeader
+              icon="shield-checkmark-outline"
+              title="Security"
+              subtitle="Choose a secure password"
+            />
+
+            <FieldLabel
+              label="Password"
+              required
+            />
+
+            <InputBox
+              icon="lock-closed-outline"
+              error={Boolean(errors.password)}
+            >
+              <TextInput
+                style={styles.input}
+                placeholder="Enter password"
+                placeholderTextColor="#9ca3af"
                 secureTextEntry={!showPassword}
                 autoCapitalize="none"
+                autoCorrect={false}
                 value={password}
                 onChangeText={(text) => {
                   setPassword(text);
-
-                  setErrors((prev) => ({
-                    ...prev,
-                    password: undefined,
-                    api: undefined,
-                  }));
+                  clearFieldError("password");
                 }}
               />
 
               <Pressable
-                onPress={() =>
-                  setShowPassword((prev) => !prev)
+                accessibilityRole="button"
+                accessibilityLabel={
+                  showPassword
+                    ? "Hide password"
+                    : "Show password"
                 }
-                hitSlop={10}
+                hitSlop={8}
+                style={styles.eyeButton}
+                onPress={() =>
+                  setShowPassword(
+                    (previous) =>
+                      !previous
+                  )
+                }
               >
-                <Text
-                  allowFontScaling={false}
-                  style={styles.eyeText}
-                >
-                  👁
-                </Text>
+                <Ionicons
+                  name={
+                    showPassword
+                      ? "eye-off-outline"
+                      : "eye-outline"
+                  }
+                  size={20}
+                  color="#7c818d"
+                />
               </Pressable>
-            </View>
+            </InputBox>
 
-            {errors.password ? (
-              <Text
-                allowFontScaling={false}
-                style={styles.fieldErrorText}
-              >
-                {errors.password}
-              </Text>
-            ) : null}
+            <FieldError
+              message={errors.password}
+            />
 
-            <Text
-              allowFontScaling={false}
-              style={styles.label}
-            >
-              Confirm Password*
-            </Text>
+            <FieldLabel
+              label="Confirm Password"
+              required
+            />
 
-            <View
-              style={[
-                styles.passwordBox,
-                errors.confirmPassword &&
-                  styles.inputError,
-              ]}
+            <InputBox
+              icon="lock-closed-outline"
+              error={Boolean(
+                errors.confirmPassword
+              )}
             >
               <TextInput
-                style={styles.passwordInput}
-                placeholder="************"
-                placeholderTextColor="#9f9f9f"
-                secureTextEntry={!showConfirmPassword}
+                style={styles.input}
+                placeholder="Re-enter password"
+                placeholderTextColor="#9ca3af"
+                secureTextEntry={
+                  !showConfirmPassword
+                }
                 autoCapitalize="none"
+                autoCorrect={false}
                 value={confirmPassword}
                 onChangeText={(text) => {
                   setConfirmPassword(text);
-
-                  setErrors((prev) => ({
-                    ...prev,
-                    confirmPassword: undefined,
-                    api: undefined,
-                  }));
+                  clearFieldError(
+                    "confirmPassword"
+                  );
                 }}
+                returnKeyType="done"
+                onSubmitEditing={
+                  handleCreateAccount
+                }
               />
 
               <Pressable
-                onPress={() =>
-                  setShowConfirmPassword((prev) => !prev)
+                accessibilityRole="button"
+                accessibilityLabel={
+                  showConfirmPassword
+                    ? "Hide confirm password"
+                    : "Show confirm password"
                 }
-                hitSlop={10}
+                hitSlop={8}
+                style={styles.eyeButton}
+                onPress={() =>
+                  setShowConfirmPassword(
+                    (previous) =>
+                      !previous
+                  )
+                }
               >
-                <Text
-                  allowFontScaling={false}
-                  style={styles.eyeText}
-                >
-                  👁
-                </Text>
+                <Ionicons
+                  name={
+                    showConfirmPassword
+                      ? "eye-off-outline"
+                      : "eye-outline"
+                  }
+                  size={20}
+                  color="#7c818d"
+                />
               </Pressable>
-            </View>
+            </InputBox>
 
-            {errors.confirmPassword ? (
-              <Text
-                allowFontScaling={false}
-                style={styles.fieldErrorText}
-              >
-                {errors.confirmPassword}
-              </Text>
-            ) : null}
+            <FieldError
+              message={
+                errors.confirmPassword
+              }
+            />
+          </View>
 
-            {errors.api ? (
-              <Text
-                allowFontScaling={false}
-                style={styles.apiErrorText}
-              >
+          {/* API error */}
+          {errors.api ? (
+            <View style={styles.apiErrorBox}>
+              <Ionicons
+                name="alert-circle-outline"
+                size={18}
+                color="#dc2626"
+              />
+
+              <Text style={styles.apiErrorText}>
                 {errors.api}
               </Text>
-            ) : null}
+            </View>
+          ) : null}
 
-            {success ? (
-              <Text
-                allowFontScaling={false}
-                style={styles.successText}
-              >
+          {/* Success */}
+          {success ? (
+            <View style={styles.successBox}>
+              <Ionicons
+                name="checkmark-circle-outline"
+                size={19}
+                color="#16a34a"
+              />
+
+              <Text style={styles.successText}>
                 {success}
               </Text>
-            ) : null}
+            </View>
+          ) : null}
 
-            <Pressable
-              style={({ pressed }) => [
-                styles.createButton,
-                (pressed || submitting) &&
-                  styles.createButtonPressed,
-              ]}
-              onPress={handleCreateAccount}
-              disabled={submitting}
-            >
-              <Text
-                allowFontScaling={false}
-                style={styles.createButtonText}
-              >
-                {submitting
-                  ? "Creating..."
-                  : "Create account"}
-              </Text>
-            </Pressable>
+          {/* Create */}
+          <Pressable
+            accessibilityRole="button"
+            disabled={submitting}
+            style={({ pressed }) => [
+              styles.createButton,
 
-            <Text
-              allowFontScaling={false}
-              style={styles.termsText}
-            >
-              By registering you agree to our{" "}
-              <Text style={styles.termsLink}>
-                Terms & Privacy Policy
-              </Text>
+              pressed &&
+                !submitting &&
+                styles.createButtonPressed,
+
+              submitting &&
+                styles.createButtonDisabled,
+            ]}
+            onPress={handleCreateAccount}
+          >
+            {submitting ? (
+              <ActivityIndicator
+                color="#ffffff"
+              />
+            ) : (
+              <>
+                <Text
+                  allowFontScaling={false}
+                  style={
+                    styles.createButtonText
+                  }
+                >
+                  Create account
+                </Text>
+
+                <Ionicons
+                  name="arrow-forward"
+                  size={20}
+                  color="#ffffff"
+                />
+              </>
+            )}
+          </Pressable>
+
+          <Text
+            allowFontScaling={false}
+            style={styles.termsText}
+          >
+            By registering you agree to our{" "}
+            <Text style={styles.termsLink}>
+              Terms & Privacy Policy
             </Text>
-          </View>
+          </Text>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
+  );
+}
+
+function SectionHeader({
+  icon,
+  title,
+  subtitle,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  subtitle: string;
+}) {
+  return (
+    <View style={styles.sectionHeader}>
+      <View style={styles.sectionIcon}>
+        <Ionicons
+          name={icon}
+          size={19}
+          color="#4d3fe6"
+        />
+      </View>
+
+      <View style={styles.sectionCopy}>
+        <Text style={styles.sectionTitle}>
+          {title}
+        </Text>
+
+        <Text
+          style={styles.sectionSubtitle}
+        >
+          {subtitle}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+function FieldLabel({
+  label,
+  required = false,
+  optional = false,
+}: {
+  label: string;
+  required?: boolean;
+  optional?: boolean;
+}) {
+  return (
+    <View style={styles.fieldLabelRow}>
+      <Text style={styles.label}>
+        {label}
+      </Text>
+
+      {required ? (
+        <Text style={styles.required}>
+          *
+        </Text>
+      ) : null}
+
+      {optional ? (
+        <Text style={styles.optional}>
+          Optional
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
+function InputBox({
+  icon,
+  error = false,
+  children,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  error?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <View
+      style={[
+        styles.inputBox,
+        error && styles.inputError,
+      ]}
+    >
+      <View style={styles.inputIcon}>
+        <Ionicons
+          name={icon}
+          size={18}
+          color={
+            error
+              ? "#dc2626"
+              : "#4d3fe6"
+          }
+        />
+      </View>
+
+      {children}
+    </View>
+  );
+}
+
+function FieldError({
+  message,
+}: {
+  message?: string;
+}) {
+  if (!message) {
+    return (
+      <View
+        style={styles.errorSpacer}
+      />
+    );
+  }
+
+  return (
+    <View style={styles.fieldErrorRow}>
+      <Ionicons
+        name="alert-circle-outline"
+        size={14}
+        color="#dc2626"
+      />
+
+      <Text
+        style={styles.fieldErrorText}
+      >
+        {message}
+      </Text>
+    </View>
   );
 }
 
@@ -542,144 +765,442 @@ const styles = StyleSheet.create({
 
   keyboardView: {
     flex: 1,
+    backgroundColor: "#f7f7fc",
+  },
+
+  header: {
+    minHeight: 62,
+
     backgroundColor: "#ffffff",
+
+    paddingHorizontal: 18,
+
+    flexDirection: "row",
+    alignItems: "center",
+
+    borderBottomWidth: 1,
+    borderBottomColor: "#efedf7",
+  },
+
+  backButton: {
+    width: 38,
+    height: 38,
+
+    borderRadius: 19,
+
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  backButtonPressed: {
+    backgroundColor: "#f3f4f6",
+  },
+
+  headerTitle: {
+    flex: 1,
+
+    textAlign: "center",
+
+    color: "#111827",
+
+    fontSize: 19,
+    lineHeight: 24,
+
+    fontWeight: "900",
+  },
+
+  headerRightSpace: {
+    width: 38,
+    height: 38,
   },
 
   scrollContent: {
     flexGrow: 1,
-    backgroundColor: "#ffffff",
-    paddingHorizontal: 22,
-    paddingTop: 32,
-    paddingBottom: 120,
+
+    backgroundColor: "#f7f7fc",
+
+    paddingHorizontal: 18,
+    paddingTop: 18,
+    paddingBottom: 44,
   },
 
-  header: {
+  intro: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 24,
-  },
 
-  backIcon: {
-    color: "#111827",
-    fontSize: 30,
-    fontWeight: "400",
-    marginRight: 14,
-  },
+    gap: 12,
 
-  headerTitle: {
-    color: "#111827",
-    fontSize: 22,
-    fontWeight: "900",
-  },
-
-  form: {
-    width: "100%",
-  },
-
-  label: {
-    color: "#111827",
-    fontSize: 14,
-    fontWeight: "600",
-    marginBottom: 8,
-  },
-
-  input: {
-    width: "100%",
-    height: 48,
-    backgroundColor: "#f3f3f3",
-    borderRadius: 5,
-    paddingHorizontal: 14,
-    fontSize: 14,
-    color: "#111111",
-    marginBottom: 6,
-  },
-
-  inputError: {
-    borderWidth: 1,
-    borderColor: "#dc2626",
-  },
-
-  fieldErrorText: {
-    color: "#dc2626",
-    fontSize: 11,
-    fontWeight: "600",
-    marginBottom: 12,
-  },
-
-  passwordBox: {
-    width: "100%",
-    height: 48,
-    backgroundColor: "#f3f3f3",
-    borderRadius: 5,
-    paddingHorizontal: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 6,
-  },
-
-  passwordInput: {
-    flex: 1,
-    height: "100%",
-    fontSize: 14,
-    color: "#111111",
-    paddingVertical: 0,
-  },
-
-  eyeText: {
-    color: "#777777",
-    fontSize: 14,
-  },
-
-  apiErrorText: {
-    color: "#dc2626",
-    fontSize: 12,
-    fontWeight: "700",
-    marginTop: 2,
-    marginBottom: 12,
-    textAlign: "center",
-  },
-
-  successText: {
-    color: "#16a34a",
-    fontSize: 12,
-    fontWeight: "700",
-    marginTop: 2,
-    marginBottom: 12,
-    textAlign: "center",
-  },
-
-  createButton: {
-    width: "72%",
-    height: 50,
-    backgroundColor: "#4d3fe6",
-    borderRadius: 8,
-    justifyContent: "center",
-    alignItems: "center",
-    alignSelf: "center",
-    marginTop: 8,
     marginBottom: 18,
   },
 
+  introIcon: {
+    width: 48,
+    height: 48,
+
+    borderRadius: 15,
+
+    backgroundColor: "#efedff",
+
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  introCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+
+  introTitle: {
+    color: "#171329",
+
+    fontSize: 19,
+    lineHeight: 24,
+
+    fontWeight: "900",
+  },
+
+  introText: {
+    color: "#8b8f9c",
+
+    fontSize: 11,
+    lineHeight: 17,
+
+    fontWeight: "600",
+
+    marginTop: 3,
+  },
+
+  sectionCard: {
+    width: "100%",
+
+    backgroundColor: "#ffffff",
+
+    borderRadius: 18,
+
+    borderWidth: 1,
+    borderColor: "#eceaf7",
+
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 14,
+
+    marginBottom: 14,
+  },
+
+  sectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+
+    gap: 10,
+
+    marginBottom: 17,
+  },
+
+  sectionIcon: {
+    width: 36,
+    height: 36,
+
+    borderRadius: 11,
+
+    backgroundColor: "#efedff",
+
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  sectionCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+
+  sectionTitle: {
+    color: "#171329",
+
+    fontSize: 15,
+    lineHeight: 20,
+
+    fontWeight: "900",
+  },
+
+  sectionSubtitle: {
+    color: "#9ca3af",
+
+    fontSize: 10,
+    lineHeight: 15,
+
+    fontWeight: "600",
+
+    marginTop: 1,
+  },
+
+  fieldLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+
+    marginBottom: 7,
+  },
+
+  label: {
+    color: "#374151",
+
+    fontSize: 12,
+    lineHeight: 17,
+
+    fontWeight: "800",
+  },
+
+  required: {
+    color: "#dc2626",
+
+    fontSize: 13,
+
+    fontWeight: "900",
+
+    marginLeft: 2,
+  },
+
+  optional: {
+    color: "#9ca3af",
+
+    fontSize: 9,
+
+    fontWeight: "700",
+
+    marginLeft: 7,
+
+    backgroundColor: "#f3f4f6",
+
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+
+    borderRadius: 7,
+
+    overflow: "hidden",
+  },
+
+  inputBox: {
+    width: "100%",
+
+    minHeight: 54,
+
+    backgroundColor: "#fafaff",
+
+    borderWidth: 1,
+    borderColor: "#deddf0",
+
+    borderRadius: 14,
+
+    paddingHorizontal: 10,
+
+    flexDirection: "row",
+    alignItems: "center",
+  },
+
+  inputError: {
+    borderColor: "#dc2626",
+
+    backgroundColor: "#fffafa",
+  },
+
+  inputIcon: {
+    width: 34,
+    height: 34,
+
+    borderRadius: 10,
+
+    backgroundColor: "#efedff",
+
+    alignItems: "center",
+    justifyContent: "center",
+
+    marginRight: 8,
+  },
+
+  input: {
+    flex: 1,
+
+    minHeight: 52,
+
+    color: "#111827",
+
+    fontSize: 14,
+
+    paddingVertical: 0,
+  },
+
+  eyeButton: {
+    width: 36,
+    height: 36,
+
+    alignItems: "center",
+    justifyContent: "center",
+
+    marginLeft: 4,
+  },
+
+  fieldErrorRow: {
+    flexDirection: "row",
+    alignItems: "center",
+
+    gap: 5,
+
+    minHeight: 29,
+
+    paddingTop: 5,
+  },
+
+  fieldErrorText: {
+    flex: 1,
+
+    color: "#dc2626",
+
+    fontSize: 10,
+    lineHeight: 15,
+
+    fontWeight: "600",
+  },
+
+  errorSpacer: {
+    height: 13,
+  },
+
+  fieldGap: {
+    height: 14,
+  },
+
+  apiErrorBox: {
+    width: "100%",
+
+    flexDirection: "row",
+    alignItems: "flex-start",
+
+    gap: 8,
+
+    backgroundColor: "#fef2f2",
+
+    borderWidth: 1,
+    borderColor: "#fecaca",
+
+    borderRadius: 13,
+
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+
+    marginBottom: 14,
+  },
+
+  apiErrorText: {
+    flex: 1,
+
+    color: "#dc2626",
+
+    fontSize: 11,
+    lineHeight: 17,
+
+    fontWeight: "700",
+  },
+
+  successBox: {
+    width: "100%",
+
+    flexDirection: "row",
+    alignItems: "flex-start",
+
+    gap: 8,
+
+    backgroundColor: "#f0fdf4",
+
+    borderWidth: 1,
+    borderColor: "#bbf7d0",
+
+    borderRadius: 13,
+
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+
+    marginBottom: 14,
+  },
+
+  successText: {
+    flex: 1,
+
+    color: "#15803d",
+
+    fontSize: 11,
+    lineHeight: 17,
+
+    fontWeight: "700",
+  },
+
+  createButton: {
+    width: "100%",
+
+    minHeight: 56,
+
+    backgroundColor: "#4d3fe6",
+
+    borderRadius: 14,
+
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+
+    gap: 9,
+
+    shadowColor: "#4d3fe6",
+    shadowOpacity: 0.18,
+    shadowRadius: 8,
+
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+
+    elevation: 3,
+
+    marginTop: 2,
+  },
+
   createButtonPressed: {
-    opacity: 0.85,
+    opacity: 0.86,
+
+    transform: [
+      {
+        scale: 0.99,
+      },
+    ],
+  },
+
+  createButtonDisabled: {
+    opacity: 0.65,
   },
 
   createButtonText: {
     color: "#ffffff",
+
     fontSize: 15,
+
     fontWeight: "900",
   },
 
   termsText: {
-    color: "#111827",
-    fontSize: 12,
+    color: "#7c818d",
+
+    fontSize: 10,
+    lineHeight: 16,
+
+    fontWeight: "600",
+
     textAlign: "center",
-    lineHeight: 18,
+
+    marginTop: 15,
+
+    paddingHorizontal: 20,
   },
 
   termsLink: {
     color: "#4d3fe6",
+
     fontWeight: "900",
   },
 });
-

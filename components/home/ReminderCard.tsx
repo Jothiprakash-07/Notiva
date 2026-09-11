@@ -1,7 +1,16 @@
 import { priorityColors, statusColors } from "../../constants/itemColors";
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { Pressable, StyleSheet, Text, View } from "react-native";
-import { ItemStatus, ItemType, Priority } from "../../types/item";
+import {
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
+import {
+  ItemStatus,
+  ItemType,
+  Priority,
+} from "../../types/item";
 
 type ReminderCardProps = {
   id: string;
@@ -16,6 +25,31 @@ type ReminderCardProps = {
   onToggle?: () => void;
 };
 
+function typeIcon(
+  type: ItemType
+): keyof typeof Ionicons.glyphMap {
+  if (type === "reminder") {
+    return "notifications-outline";
+  }
+
+  if (type === "task") {
+    return "checkbox-outline";
+  }
+
+  if (type === "event") {
+    return "calendar-outline";
+  }
+
+  return "gift-outline";
+}
+
+function typeLabel(type: ItemType) {
+  return (
+    type[0].toUpperCase() +
+    type.slice(1)
+  );
+}
+
 export default function ReminderCard({
   priority,
   title,
@@ -27,199 +61,550 @@ export default function ReminderCard({
   onPress,
   onToggle,
 }: ReminderCardProps) {
-  const colors = statusColors[status];
+  const colors =
+    statusColors[status];
+
+  const canToggle =
+    (type === "reminder" ||
+      type === "task") &&
+    (status === "Pending" ||
+      status === "Done");
+
+  const isDone =
+    status === "Done";
 
   return (
-    <Pressable style={styles.card} onPress={onPress}>
-      {/* Left status line */}
-      <View style={[styles.leftLine, { backgroundColor: colors.color }]} />
+    <Pressable
+      accessibilityRole="button"
+      style={({ pressed }) => [
+        styles.card,
+        pressed &&
+          styles.cardPressed,
+      ]}
+      onPress={onPress}
+    >
+      {/* Status indicator */}
+      <View
+        style={[
+          styles.leftLine,
+          {
+            backgroundColor:
+              colors.color,
+          },
+        ]}
+      />
 
       <View style={styles.content}>
+        {/* Top row */}
         <View style={styles.topRow}>
-          {((type === "reminder" || type === "task") && (status === "Pending" || status === "Done")) ? <Pressable accessibilityRole="checkbox" accessibilityLabel="Mark done" accessibilityState={{ checked: status === "Done", disabled: status === "Done" }} disabled={status === "Done"} style={styles.checkbox} onPress={(event) => { event.stopPropagation(); if (status === "Pending") onToggle?.(); }}><Ionicons name={status === "Done" ? "checkmark-circle" : "ellipse-outline"} size={21} color={status === "Done" ? "#22c55e" : "#9ca3af"} /></Pressable> : null}
-          <Text
-            allowFontScaling={false}
-            style={styles.title}
-            numberOfLines={1}
-          >
-            {title}
-          </Text>
+          <View style={styles.titleArea}>
+            {canToggle ? (
+              <Pressable
+                accessibilityRole="checkbox"
+                accessibilityLabel={
+                  isDone
+                    ? "Completed"
+                    : "Mark done"
+                }
+                accessibilityState={{
+                  checked:
+                    isDone,
+                  disabled:
+                    isDone,
+                }}
+                disabled={
+                  isDone
+                }
+                hitSlop={8}
+                style={
+                  styles.checkbox
+                }
+                onPress={(
+                  event
+                ) => {
+                  event.stopPropagation();
 
-          <View style={[styles.statusBadge, { backgroundColor: colors.backgroundColor }]}>
+                  if (
+                    status ===
+                    "Pending"
+                  ) {
+                    onToggle?.();
+                  }
+                }}
+              >
+                <Ionicons
+                  name={
+                    isDone
+                      ? "checkmark-circle"
+                      : "ellipse-outline"
+                  }
+                  size={23}
+                  color={
+                    isDone
+                      ? "#22c55e"
+                      : "#9ca3af"
+                  }
+                />
+              </Pressable>
+            ) : (
+              <View
+                style={
+                  styles.typeIconSmall
+                }
+              >
+                <Ionicons
+                  name={typeIcon(
+                    type
+                  )}
+                  size={15}
+                  color="#4d3fe6"
+                />
+              </View>
+            )}
+
             <Text
-              allowFontScaling={false}
-              style={[styles.statusText, { color: colors.color }]}
+              allowFontScaling={
+                false
+              }
+              style={[
+                styles.title,
+
+                isDone &&
+                  styles.doneTitle,
+              ]}
+              numberOfLines={2}
+            >
+              {title}
+            </Text>
+          </View>
+
+          <View
+            style={[
+              styles.statusBadge,
+              {
+                backgroundColor:
+                  colors.backgroundColor,
+              },
+            ]}
+          >
+            <Text
+              allowFontScaling={
+                false
+              }
+              style={[
+                styles.statusText,
+                {
+                  color:
+                    colors.color,
+                },
+              ]}
+              numberOfLines={1}
             >
               {status}
             </Text>
           </View>
         </View>
 
-        <View style={styles.metaRow}>
-          <View style={styles.metaGroup}>
-            <View style={styles.metaItem}>
-              <Ionicons
-                name="time-outline"
-                size={15}
-                color="#9ca3af"
-              />
+        {/* Time + Date */}
+        <View
+          style={styles.metaRow}
+        >
+          <View
+            style={styles.metaItem}
+          >
+            <Ionicons
+              name="time-outline"
+              size={15}
+              color="#8b8f9c"
+            />
 
-              <Text
-                allowFontScaling={false}
-                style={styles.metaText}
-              >
-                {time}
-              </Text>
-            </View>
+            <Text
+              allowFontScaling={
+                false
+              }
+              style={
+                styles.metaText
+              }
+              numberOfLines={1}
+            >
+              {time}
+            </Text>
+          </View>
 
-            <View style={styles.metaItem}>
-              <Ionicons
-                name="calendar-outline"
-                size={15}
-                color="#9ca3af"
-              />
+          <View
+            style={
+              styles.metaDivider
+            }
+          />
 
-              <Text
-                allowFontScaling={false}
-                style={styles.metaText}
-              >
-                {date}
-              </Text>
-            </View>
+          <View
+            style={styles.metaItem}
+          >
+            <Ionicons
+              name="calendar-outline"
+              size={15}
+              color="#8b8f9c"
+            />
 
-            {priority ? <Text style={[styles.priorityBadge, priorityColors[priority]]}>{priority}</Text> : null}
-            <View style={styles.categoryBadge}>
-              <Text
-                allowFontScaling={false}
-                style={styles.categoryText}
-                numberOfLines={1}
-              >
-            {category} • {type[0].toUpperCase() + type.slice(1)}
-              </Text>
-            </View>
+            <Text
+              allowFontScaling={
+                false
+              }
+              style={
+                styles.metaText
+              }
+              numberOfLines={1}
+            >
+              {date}
+            </Text>
           </View>
         </View>
+
+        {/* Bottom tags */}
+        <View
+          style={styles.tagsRow}
+        >
+          <View
+            style={
+              styles.categoryBadge
+            }
+          >
+            <Ionicons
+              name={typeIcon(type)}
+              size={12}
+              color="#4d3fe6"
+            />
+
+            <Text
+              allowFontScaling={
+                false
+              }
+              style={
+                styles.categoryText
+              }
+              numberOfLines={1}
+            >
+              {category}
+            </Text>
+          </View>
+
+          <View
+            style={
+              styles.typeBadge
+            }
+          >
+            <Text
+              allowFontScaling={
+                false
+              }
+              style={
+                styles.typeText
+              }
+              numberOfLines={1}
+            >
+              {typeLabel(type)}
+            </Text>
+          </View>
+
+          {priority ? (
+            <Text
+              allowFontScaling={
+                false
+              }
+              style={[
+                styles.priorityBadge,
+                priorityColors[
+                  priority
+                ],
+              ]}
+            >
+              {priority}
+            </Text>
+          ) : null}
+        </View>
+      </View>
+
+      {/* Open details indicator */}
+      <View
+        style={styles.chevronArea}
+      >
+        <Ionicons
+          name="chevron-forward"
+          size={17}
+          color="#c4c7cf"
+        />
       </View>
     </Pressable>
   );
 }
 
-const styles = StyleSheet.create({
-  card: {
-    width: "100%",
-    minHeight: 88,
-    backgroundColor: "#ffffff",
-    borderRadius: 8,
-    marginBottom: 10,
-    flexDirection: "row",
-    overflow: "hidden",
+const styles =
+  StyleSheet.create({
+    card: {
+      width: "100%",
+      minHeight: 116,
 
-    shadowColor: "#000000",
-    shadowOpacity: 0.1,
-    shadowRadius: 6,
-    shadowOffset: {
-      width: 0,
-      height: 2,
+      backgroundColor:
+        "#ffffff",
+
+      borderRadius: 16,
+
+      flexDirection: "row",
+      alignItems: "stretch",
+
+      overflow: "hidden",
+
+      borderWidth: 1,
+      borderColor:
+        "#efedf7",
+
+      shadowColor:
+        "#171329",
+      shadowOpacity: 0.055,
+      shadowRadius: 8,
+
+      shadowOffset: {
+        width: 0,
+        height: 3,
+      },
+
+      elevation: 2,
     },
-    elevation: 3,
-  },
 
-  leftLine: {
-    width: 4,
-  },
+    cardPressed: {
+      opacity: 0.88,
+      transform: [
+        {
+          scale: 0.995,
+        },
+      ],
+    },
 
-doneLine: {
-    backgroundColor: "#22c55e",
-  },
+    leftLine: {
+      width: 5,
+    },
 
-content: {
-    flex: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 14,
-  },
+    content: {
+      flex: 1,
+      paddingLeft: 14,
+      paddingRight: 8,
+      paddingTop: 15,
+      paddingBottom: 14,
+      minWidth: 0,
+    },
 
-  checkbox: {
-    marginRight: 7,
-    justifyContent: "center",
-  },
+    topRow: {
+      flexDirection: "row",
+      alignItems:
+        "flex-start",
+      justifyContent:
+        "space-between",
+      gap: 10,
+    },
 
-  topRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    columnGap: 8,
-  },
+    titleArea: {
+      flex: 1,
+      minWidth: 0,
 
-  title: {
-    flex: 1,
-    color: "#111827",
-    fontSize: 15,
-    fontWeight: "900",
-    lineHeight: 20,
-  },
+      flexDirection: "row",
+      alignItems:
+        "flex-start",
+      gap: 8,
+    },
 
-  statusBadge: {
-    minWidth: 62,
-    height: 23,
-    borderRadius: 12,
-    justifyContent: "center",
-    alignItems: "center",
-    paddingHorizontal: 9,
-  },
+    checkbox: {
+      width: 25,
+      minHeight: 25,
 
-doneBadge: {
-    backgroundColor: "#a7f3c6",
-  },
+      alignItems: "center",
+      justifyContent:
+        "center",
 
-statusText: {
-    color: "#4d3fe6",
-    fontSize: 10,
-    fontWeight: "900",
-  },
+      marginTop: -1,
+    },
 
-  metaRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: 10,
-  },
+    typeIconSmall: {
+      width: 25,
+      height: 25,
 
-  metaGroup: {
-    flexDirection: "row",
-    alignItems: "center",
-    flexWrap: "wrap",
-    flex: 1,
-    rowGap: 6,
-    columnGap: 8,
-  },
+      borderRadius: 8,
 
-  metaItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    columnGap: 4,
-  },
+      alignItems: "center",
+      justifyContent:
+        "center",
 
-  metaText: {
-    color: "#9ca3af",
-    fontSize: 11,
-    fontWeight: "600",
-  },
+      backgroundColor:
+        "#f1efff",
+    },
 
-  priorityBadge: { fontSize: 10, fontWeight: "800", paddingHorizontal: 7, paddingVertical: 3, borderRadius: 9, overflow: "hidden" },
+    title: {
+      flex: 1,
+      minWidth: 0,
 
-  categoryBadge: {
-    minWidth: 44,
-    maxWidth: 74,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: "#dedbff",
-    justifyContent: "center",
-    alignItems: "center",
-    paddingHorizontal: 7,
-  },
+      color: "#171329",
 
-  categoryText: {
-    color: "#4d3fe6",
-    fontSize: 9,
-    fontWeight: "900",
-  },
-});
+      fontSize: 15,
+      lineHeight: 20,
+
+      fontWeight: "900",
+    },
+
+    doneTitle: {
+      color: "#6b7280",
+      textDecorationLine:
+        "line-through",
+    },
+
+    statusBadge: {
+      minWidth: 62,
+      maxWidth: 82,
+
+      minHeight: 25,
+
+      borderRadius: 13,
+
+      justifyContent:
+        "center",
+      alignItems: "center",
+
+      paddingHorizontal: 9,
+      paddingVertical: 4,
+
+      flexShrink: 0,
+    },
+
+    statusText: {
+      fontSize: 10,
+      lineHeight: 13,
+
+      fontWeight: "900",
+    },
+
+    metaRow: {
+      flexDirection: "row",
+      alignItems: "center",
+
+      flexWrap: "wrap",
+
+      marginTop: 10,
+
+      gap: 8,
+    },
+
+    metaItem: {
+      flexDirection: "row",
+      alignItems: "center",
+
+      gap: 4,
+    },
+
+    metaDivider: {
+      width: 3,
+      height: 3,
+
+      borderRadius: 2,
+
+      backgroundColor:
+        "#d1d5db",
+    },
+
+    metaText: {
+      color: "#7c818d",
+
+      fontSize: 11,
+      lineHeight: 15,
+
+      fontWeight: "600",
+    },
+
+    tagsRow: {
+      flexDirection: "row",
+      alignItems: "center",
+
+      flexWrap: "wrap",
+
+      marginTop: 11,
+
+      gap: 7,
+    },
+
+    categoryBadge: {
+      maxWidth: 130,
+
+      minHeight: 25,
+
+      borderRadius: 12,
+
+      backgroundColor:
+        "#efedff",
+
+      flexDirection: "row",
+      alignItems: "center",
+
+      gap: 5,
+
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+    },
+
+    categoryText: {
+      flexShrink: 1,
+
+      color: "#4d3fe6",
+
+      fontSize: 10,
+      lineHeight: 13,
+
+      fontWeight: "800",
+    },
+
+    typeBadge: {
+      minHeight: 25,
+
+      borderRadius: 12,
+
+      backgroundColor:
+        "#f3f4f6",
+
+      justifyContent:
+        "center",
+
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+    },
+
+    typeText: {
+      color: "#6b7280",
+
+      fontSize: 10,
+      lineHeight: 13,
+
+      fontWeight: "800",
+    },
+
+    priorityBadge: {
+      minHeight: 25,
+
+      borderRadius: 12,
+
+      overflow: "hidden",
+
+      paddingHorizontal: 8,
+      paddingVertical: 5,
+
+      fontSize: 10,
+      lineHeight: 13,
+
+      fontWeight: "900",
+    },
+
+    chevronArea: {
+      width: 28,
+
+      alignItems: "center",
+      justifyContent:
+        "center",
+
+      paddingRight: 6,
+    },
+  });

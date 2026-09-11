@@ -1,3 +1,4 @@
+import Ionicons from "@expo/vector-icons/Ionicons";
 import { useRef, useState } from "react";
 import {
   FlatList,
@@ -13,14 +14,10 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-// Parent screen-lendu function receive panna type create panrom.
-// Get Started click panna Login screen ku poganum, athukku onFinish use panrom.
 type OnboardingScreenProps = {
   onFinish?: () => void;
 };
 
-// Onboarding screen data.
-// Live project la image, title, subtitle, color change panna inga mattum edit panna pothum.
 const onboardingData = [
   {
     id: 1,
@@ -56,102 +53,268 @@ const onboardingData = [
   },
 ];
 
-export default function OnboardingScreen({ onFinish }: OnboardingScreenProps) {
-  // Mobile width and height get panna use panrom.
-  // Ella mobile screen-ku responsive layout set panna useful.
-  const { width, height } = useWindowDimensions();
+export default function OnboardingScreen({
+  onFinish,
+}: OnboardingScreenProps) {
+  const { width, height } =
+    useWindowDimensions();
 
-  // Current onboarding slide index store panna use panrom.
-  const [currentIndex, setCurrentIndex] = useState(0);
+  const [currentIndex, setCurrentIndex] =
+    useState(0);
 
-  // Continue / Skip click pannumbothu FlatList slide move panna ref use panrom.
-  const listRef = useRef<FlatList | null>(null);
+  const listRef =
+    useRef<FlatList>(null);
 
-  // Small mobile and large mobile detect panna use panrom.
-  const isSmallPhone = height < 700;
-  const isLargePhone = height > 850;
+  const isSmallPhone =
+    height < 700;
 
-  // Current slide color button and dot-ku use panrom.
-  const activeColor = onboardingData[currentIndex].color;
+  const isLargePhone =
+    height > 850;
 
-  // Continue button click panna next slide pogum.
-  // Last slide-la Get Started click panna Login screen show aagum.
+  const isLastSlide =
+    currentIndex ===
+    onboardingData.length - 1;
+
+  const activeColor =
+    onboardingData[currentIndex]?.color ??
+    "#4d3fe6";
+
   const handleContinue = () => {
-    if (currentIndex < onboardingData.length - 1) {
+    if (!isLastSlide) {
       listRef.current?.scrollToIndex({
         index: currentIndex + 1,
         animated: true,
       });
-    } else {
-      onFinish?.();
+
+      return;
     }
+
+    onFinish?.();
   };
 
-  // Skip click panna direct last onboarding slide pogum.
   const handleSkip = () => {
     listRef.current?.scrollToIndex({
-      index: onboardingData.length - 1,
+      index:
+        onboardingData.length - 1,
       animated: true,
     });
   };
 
-  // User swipe pannumbothu current index update panna use panrom.
   const handleScrollEnd = (
     event: NativeSyntheticEvent<NativeScrollEvent>
   ) => {
-    const index = Math.round(event.nativeEvent.contentOffset.x / width);
-    setCurrentIndex(index);
+    const offset =
+      event.nativeEvent.contentOffset.x;
+
+    const index = Math.round(
+      offset / width
+    );
+
+    const safeIndex = Math.max(
+      0,
+      Math.min(
+        index,
+        onboardingData.length - 1
+      )
+    );
+
+    setCurrentIndex(safeIndex);
   };
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
+      <StatusBar
+        barStyle="dark-content"
+        backgroundColor="#ffffff"
+      />
 
       <View style={styles.screen}>
-        {/* Top skip area */}
+        {/* Header */}
         <View style={styles.header}>
-          <View />
+          <View style={styles.brandBadge}>
+            <View
+              style={[
+                styles.brandDot,
+                {
+                  backgroundColor:
+                    activeColor,
+                },
+              ]}
+            />
 
-          <Pressable onPress={handleSkip}>
-            <Text allowFontScaling={false} style={styles.skipText}>
-              Skip
+            <Text
+              allowFontScaling={false}
+              style={styles.brandText}
+            >
+              Notiva
             </Text>
-          </Pressable>
+          </View>
+
+          {!isLastSlide ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Skip onboarding"
+              hitSlop={10}
+              style={({ pressed }) => [
+                styles.skipButton,
+                pressed &&
+                  styles.skipPressed,
+              ]}
+              onPress={handleSkip}
+            >
+              <Text
+                allowFontScaling={false}
+                style={styles.skipText}
+              >
+                Skip
+              </Text>
+
+              <Ionicons
+                name="chevron-forward"
+                size={15}
+                color="#6b7280"
+              />
+            </Pressable>
+          ) : (
+            <View
+              style={styles.headerSpacer}
+            />
+          )}
         </View>
 
-        {/* Onboarding horizontal slider */}
+        {/* Slides */}
         <FlatList
           ref={listRef}
           data={onboardingData}
-          keyExtractor={(item) => item.id.toString()}
+          keyExtractor={(item) =>
+            item.id.toString()
+          }
           horizontal
           pagingEnabled
-          showsHorizontalScrollIndicator={false}
-          onMomentumScrollEnd={handleScrollEnd}
           bounces={false}
+          showsHorizontalScrollIndicator={
+            false
+          }
+          onMomentumScrollEnd={
+            handleScrollEnd
+          }
+          keyboardShouldPersistTaps="handled"
+          getItemLayout={(
+            _,
+            index
+          ) => ({
+            length: width,
+            offset:
+              width * index,
+            index,
+          })}
           renderItem={({ item }) => (
-            <View style={[styles.slide, { width }]}>
-              <Image
-                source={item.image}
-                resizeMode="contain"
+            <View
+              style={[
+                styles.slide,
+                {
+                  width,
+                },
+              ]}
+            >
+              {/* Illustration area */}
+              <View
                 style={[
-                  styles.image,
+                  styles.imageArea,
                   {
-                    width: width * 0.78,
-                    height: isSmallPhone
-                      ? height * 0.28
-                      : isLargePhone
-                        ? height * 0.36
-                        : height * 0.32,
+                    height:
+                      isSmallPhone
+                        ? height *
+                          0.32
+                        : isLargePhone
+                        ? height *
+                          0.39
+                        : height *
+                          0.35,
                   },
                 ]}
-              />
+              >
+                <View
+                  style={[
+                    styles.imageGlow,
+                    {
+                      backgroundColor:
+                        `${item.color}12`,
+                    },
+                  ]}
+                />
+
+                <Image
+                  source={item.image}
+                  resizeMode="contain"
+                  style={[
+                    styles.image,
+                    {
+                      width:
+                        width *
+                        0.78,
+
+                      height:
+                        isSmallPhone
+                          ? height *
+                            0.27
+                          : isLargePhone
+                          ? height *
+                            0.33
+                          : height *
+                            0.30,
+                    },
+                  ]}
+                />
+              </View>
+
+              {/* Step */}
+              <View
+                style={[
+                  styles.stepBadge,
+                  {
+                    backgroundColor:
+                      `${item.color}15`,
+                  },
+                ]}
+              >
+                <Text
+                  allowFontScaling={false}
+                  style={[
+                    styles.stepText,
+                    {
+                      color:
+                        item.color,
+                    },
+                  ]}
+                >
+                  {String(
+                    currentIndex +
+                      1
+                  ).padStart(
+                    2,
+                    "0"
+                  )}{" "}
+                  /{" "}
+                  {String(
+                    onboardingData.length
+                  ).padStart(
+                    2,
+                    "0"
+                  )}
+                </Text>
+              </View>
 
               <Text
                 allowFontScaling={false}
                 style={[
                   styles.title,
-                  { fontSize: isSmallPhone ? 21 : 24 },
+                  {
+                    fontSize:
+                      isSmallPhone
+                        ? 22
+                        : 26,
+                  },
                 ]}
               >
                 {item.title}
@@ -162,9 +325,19 @@ export default function OnboardingScreen({ onFinish }: OnboardingScreenProps) {
                 style={[
                   styles.subtitle,
                   {
-                    fontSize: isSmallPhone ? 13 : 14,
-                    lineHeight: isSmallPhone ? 20 : 22,
-                    width: width * 0.78,
+                    fontSize:
+                      isSmallPhone
+                        ? 12
+                        : 13,
+
+                    lineHeight:
+                      isSmallPhone
+                        ? 19
+                        : 21,
+
+                    width:
+                      width *
+                      0.82,
                   },
                 ]}
               >
@@ -174,40 +347,98 @@ export default function OnboardingScreen({ onFinish }: OnboardingScreenProps) {
           )}
         />
 
-        {/* Bottom dots and button */}
+        {/* Footer */}
         <View style={styles.footer}>
-          <View style={styles.dotsWrapper}>
-            {onboardingData.map((item, index) => (
-              <View
-                key={item.id}
-                style={[
-                  styles.dot,
-                  {
-                    width: currentIndex === index ? 32 : 9,
-                    backgroundColor:
-                      currentIndex === index ? activeColor : "#d8d3ff",
-                  },
-                ]}
-              />
-            ))}
+          <View
+            style={
+              styles.dotsWrapper
+            }
+          >
+            {onboardingData.map(
+              (item, index) => {
+                const active =
+                  currentIndex ===
+                  index;
+
+                return (
+                  <View
+                    key={item.id}
+                    style={[
+                      styles.dot,
+
+                      active
+                        ? styles.activeDot
+                        : styles.inactiveDot,
+
+                      {
+                        backgroundColor:
+                          active
+                            ? activeColor
+                            : "#dedde8",
+                      },
+                    ]}
+                  />
+                );
+              }
+            )}
           </View>
 
           <Pressable
-            style={[
+            accessibilityRole="button"
+            accessibilityLabel={
+              isLastSlide
+                ? "Get started"
+                : "Continue"
+            }
+            style={({ pressed }) => [
               styles.continueButton,
+
               {
-                backgroundColor: activeColor,
-                width: width * 0.72,
+                backgroundColor:
+                  activeColor,
+
+                width:
+                  Math.min(
+                    width - 36,
+                    380
+                  ),
               },
+
+              pressed &&
+                styles.continuePressed,
             ]}
             onPress={handleContinue}
           >
-            <Text allowFontScaling={false} style={styles.continueText}>
-              {currentIndex === onboardingData.length - 1
+            <Text
+              allowFontScaling={false}
+              style={
+                styles.continueText
+              }
+            >
+              {isLastSlide
                 ? "Get Started"
                 : "Continue"}
             </Text>
+
+            <View
+              style={
+                styles.buttonIcon
+              }
+            >
+              <Ionicons
+                name="arrow-forward"
+                size={19}
+                color="#ffffff"
+              />
+            </View>
           </Pressable>
+
+          <Text
+            allowFontScaling={false}
+            style={styles.footerHint}
+          >
+            Swipe to explore
+          </Text>
         </View>
       </View>
     </SafeAreaView>
@@ -226,70 +457,245 @@ const styles = StyleSheet.create({
   },
 
   header: {
-    height: 58,
-    paddingHorizontal: 28,
+    minHeight: 62,
+
+    paddingHorizontal: 18,
+
     flexDirection: "row",
-    justifyContent: "space-between",
+    justifyContent:
+      "space-between",
     alignItems: "center",
   },
 
+  brandBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+
+    gap: 7,
+  },
+
+  brandDot: {
+    width: 9,
+    height: 9,
+
+    borderRadius: 5,
+  },
+
+  brandText: {
+    color: "#171329",
+
+    fontSize: 14,
+
+    fontWeight: "900",
+  },
+
+  skipButton: {
+    minHeight: 36,
+
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+
+    gap: 2,
+
+    paddingHorizontal: 10,
+
+    borderRadius: 10,
+
+    backgroundColor: "#f7f7fa",
+  },
+
+  skipPressed: {
+    opacity: 0.7,
+  },
+
   skipText: {
-    color: "#777777",
-    fontSize: 13,
-    fontWeight: "600",
+    color: "#6b7280",
+
+    fontSize: 12,
+
+    fontWeight: "800",
+  },
+
+  headerSpacer: {
+    width: 60,
+    height: 36,
   },
 
   slide: {
     flex: 1,
+
+    alignItems: "center",
+
+    paddingHorizontal: 22,
+    paddingTop: 4,
+  },
+
+  imageArea: {
+    width: "100%",
+
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 24,
+
+    position: "relative",
+  },
+
+  imageGlow: {
+    position: "absolute",
+
+    width: 230,
+    height: 230,
+
+    borderRadius: 115,
   },
 
   image: {
-    marginBottom: 36,
+    maxWidth: 360,
+  },
+
+  stepBadge: {
+    minHeight: 28,
+
+    borderRadius: 14,
+
+    alignItems: "center",
+    justifyContent: "center",
+
+    paddingHorizontal: 11,
+
+    marginTop: 6,
+    marginBottom: 14,
+  },
+
+  stepText: {
+    fontSize: 10,
+
+    fontWeight: "900",
+
+    letterSpacing: 0.5,
   },
 
   title: {
-    color: "#111111",
+    color: "#171329",
+
     fontWeight: "900",
+
     textAlign: "center",
-    marginBottom: 12,
+
+    lineHeight: 32,
+
+    marginBottom: 10,
+
+    maxWidth: 330,
   },
 
   subtitle: {
-    color: "#555555",
+    color: "#7c818d",
+
     textAlign: "center",
-    fontWeight: "400",
+
+    fontWeight: "600",
+
+    maxWidth: 340,
   },
 
   footer: {
-    paddingBottom: 34,
+    paddingHorizontal: 18,
+    paddingTop: 12,
+    paddingBottom: 20,
+
     alignItems: "center",
   },
 
   dotsWrapper: {
+    minHeight: 20,
+
     flexDirection: "row",
     alignItems: "center",
-    gap: 7,
-    marginBottom: 30,
+
+    gap: 6,
+
+    marginBottom: 20,
   },
 
   dot: {
-    height: 9,
-    borderRadius: 20,
+    height: 8,
+
+    borderRadius: 4,
+  },
+
+  activeDot: {
+    width: 28,
+  },
+
+  inactiveDot: {
+    width: 8,
   },
 
   continueButton: {
-    height: 50,
-    borderRadius: 9,
+    minHeight: 54,
+
+    borderRadius: 15,
+
+    flexDirection: "row",
     justifyContent: "center",
     alignItems: "center",
+
+    paddingHorizontal: 18,
+
+    shadowColor: "#171329",
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+
+    elevation: 3,
+  },
+
+  continuePressed: {
+    opacity: 0.86,
+
+    transform: [
+      {
+        scale: 0.99,
+      },
+    ],
   },
 
   continueText: {
     color: "#ffffff",
-    fontSize: 15,
-    fontWeight: "700",
+
+    fontSize: 14,
+
+    fontWeight: "900",
+  },
+
+  buttonIcon: {
+    position: "absolute",
+    right: 18,
+
+    width: 30,
+    height: 30,
+
+    borderRadius: 10,
+
+    backgroundColor:
+      "rgba(255,255,255,0.15)",
+
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  footerHint: {
+    color: "#b0b3bd",
+
+    fontSize: 9,
+
+    fontWeight: "600",
+
+    marginTop: 10,
   },
 });

@@ -1,30 +1,94 @@
 import { Tabs } from "expo-router";
-import { Image } from "react-native";
+import {
+  Image,
+  Platform,
+  StyleSheet,
+  View,
+} from "react-native";
 
 const homeIcon = require("../../assets/icon/Nav/home.png");
 const fileIcon = require("../../assets/icon/Nav/file-text.png");
-const teamIcon = require("../../assets/icon/Nav/building-2.png");
 const bellIcon = require("../../assets/icon/Nav/bell.png");
+const teamIcon = require("../../assets/icon/Nav/building-2.png");
 const userIcon = require("../../assets/icon/Nav/user.png");
+
+const ACTIVE_COLOR = "#4d3fe6";
+const INACTIVE_COLOR = "#8b8f9c";
 
 export default function TabLayout() {
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: "#3b82f6",
-        tabBarInactiveTintColor: "#4b5563",
+
+        tabBarActiveTintColor:
+          ACTIVE_COLOR,
+
+        tabBarInactiveTintColor:
+          INACTIVE_COLOR,
+
+        tabBarHideOnKeyboard: true,
+
+        tabBarStyle: {
+          height:
+            Platform.OS === "ios"
+              ? 84
+              : 70,
+
+          paddingTop: 8,
+
+          paddingBottom:
+            Platform.OS === "ios"
+              ? 20
+              : 8,
+
+          backgroundColor:
+            "#ffffff",
+
+          borderTopWidth: 1,
+
+          borderTopColor:
+            "#eceaf7",
+
+          elevation: 8,
+
+          shadowColor:
+            "#171329",
+
+          shadowOpacity: 0.08,
+
+          shadowRadius: 10,
+
+          shadowOffset: {
+            width: 0,
+            height: -3,
+          },
+        },
+
+        tabBarLabelStyle: {
+          fontSize: 10,
+          fontWeight: "700",
+          marginTop: 3,
+        },
+
+        tabBarItemStyle: {
+          paddingVertical: 2,
+        },
       }}
     >
       <Tabs.Screen
         name="index"
         options={{
           title: "Home",
-          tabBarIcon: ({ color }) => (
-            <Image
+
+          tabBarIcon: ({
+            color,
+            focused,
+          }) => (
+            <TabIcon
               source={homeIcon}
-              style={{ width: 22, height: 22, tintColor: color }}
-              resizeMode="contain"
+              color={color}
+              focused={focused}
             />
           ),
         }}
@@ -34,25 +98,15 @@ export default function TabLayout() {
         name="reminders"
         options={{
           title: "Reminders",
-          tabBarIcon: ({ color }) => (
-            <Image
-              source={fileIcon}
-              style={{ width: 22, height: 22, tintColor: color }}
-              resizeMode="contain"
-            />
-          ),
-        }}
-      />
 
-      <Tabs.Screen
-        name="team"
-        options={{
-          title: "Team",
-          tabBarIcon: ({ color }) => (
-            <Image
-              source={teamIcon}
-              style={{ width: 22, height: 22, tintColor: color }}
-              resizeMode="contain"
+          tabBarIcon: ({
+            color,
+            focused,
+          }) => (
+            <TabIcon
+              source={fileIcon}
+              color={color}
+              focused={focused}
             />
           ),
         }}
@@ -62,11 +116,33 @@ export default function TabLayout() {
         name="notifications"
         options={{
           title: "Notifications",
-          tabBarIcon: ({ color }) => (
-            <Image
+
+          tabBarIcon: ({
+            color,
+            focused,
+          }) => (
+            <TabIcon
               source={bellIcon}
-              style={{ width: 22, height: 22, tintColor: color }}
-              resizeMode="contain"
+              color={color}
+              focused={focused}
+            />
+          ),
+        }}
+      />
+
+      <Tabs.Screen
+        name="team"
+        options={{
+          title: "Team",
+
+          tabBarIcon: ({
+            color,
+            focused,
+          }) => (
+            <TabIcon
+              source={teamIcon}
+              color={color}
+              focused={focused}
             />
           ),
         }}
@@ -76,11 +152,15 @@ export default function TabLayout() {
         name="profile"
         options={{
           title: "Profile",
-          tabBarIcon: ({ color }) => (
-            <Image
+
+          tabBarIcon: ({
+            color,
+            focused,
+          }) => (
+            <TabIcon
               source={userIcon}
-              style={{ width: 22, height: 22, tintColor: color }}
-              resizeMode="contain"
+              color={color}
+              focused={focused}
             />
           ),
         }}
@@ -88,3 +168,56 @@ export default function TabLayout() {
     </Tabs>
   );
 }
+
+function TabIcon({
+  source,
+  color,
+  focused,
+}: {
+  source: any;
+  color: string;
+  focused: boolean;
+}) {
+  return (
+    <View
+      style={[
+        styles.iconWrap,
+
+        focused &&
+          styles.iconWrapActive,
+      ]}
+    >
+      <Image
+        source={source}
+        style={[
+          styles.icon,
+          {
+            tintColor: color,
+          },
+        ]}
+        resizeMode="contain"
+      />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  iconWrap: {
+    width: 34,
+    height: 30,
+
+    borderRadius: 10,
+
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  iconWrapActive: {
+    backgroundColor: "#efedff",
+  },
+
+  icon: {
+    width: 21,
+    height: 21,
+  },
+});

@@ -1,6 +1,8 @@
-import { useState } from "react";
+import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
+import { useState } from "react";
 import {
+  ActivityIndicator,
   Image,
   KeyboardAvoidingView,
   Modal,
@@ -13,15 +15,13 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 const popupLogo = require("../../../assets/images/Blue-logo.png");
 
-// IMPORTANT:
-// Expo mobile app-la localhost work aagathu.
-// Phone browser-la backend open panna use panna same laptop IP-a inga podunga.
-const API_BASE_URL = "http://192.168.43.159:5000";
+// Physical phone cannot use localhost.
+// Update this IP when your PC network IP changes.
+const API_BASE_URL = "http://10.151.249.42:5000";
 
 type OrganizationRegisterScreenProps = {
   onBack?: () => void;
@@ -49,6 +49,7 @@ export default function OrganizationRegisterScreen({
 
   const [organizationCode, setOrganizationCode] = useState("");
   const [showCodePopup, setShowCodePopup] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const clearForm = () => {
     setGstNumber("");
@@ -58,43 +59,69 @@ export default function OrganizationRegisterScreen({
     setAddress("");
   };
 
+  const clearError = (
+    field?: keyof FieldErrors
+  ) => {
+    setErrors((previous) => ({
+      ...previous,
+      ...(field
+        ? {
+            [field]: undefined,
+          }
+        : {}),
+      api: undefined,
+    }));
+  };
+
   const validateForm = () => {
     const trimmedGstNumber = gstNumber.trim();
-    const trimmedOrganizationName = organizationName.trim();
+    const trimmedOrganizationName =
+      organizationName.trim();
     const trimmedEmail = email.trim();
-    const trimmedMobileNumber = mobileNumber.trim();
+    const trimmedMobileNumber =
+      mobileNumber.trim();
     const trimmedAddress = address.trim();
 
     const newErrors: FieldErrors = {};
 
-    // GST number irundha below fields required illa.
+    // If GST is provided, remaining fields are optional.
     if (trimmedGstNumber.length > 0) {
       setErrors({});
       return true;
     }
 
-    // GST empty-na below fields compulsory.
+    // If GST is empty, below fields are required.
     if (!trimmedOrganizationName) {
-      newErrors.organizationName = "Organization name is required.";
+      newErrors.organizationName =
+        "Organization name is required.";
     }
 
     if (!trimmedEmail) {
-      newErrors.email = "Email address is required.";
-    } else if (!trimmedEmail.includes("@") || !trimmedEmail.includes(".")) {
-      newErrors.email = "Please enter a valid email address.";
+      newErrors.email =
+        "Email address is required.";
+    } else if (
+      !trimmedEmail.includes("@") ||
+      !trimmedEmail.includes(".")
+    ) {
+      newErrors.email =
+        "Please enter a valid email address.";
     }
 
     if (!trimmedMobileNumber) {
-      newErrors.mobileNumber = "Mobile number is required.";
+      newErrors.mobileNumber =
+        "Mobile number is required.";
     }
 
     if (!trimmedAddress) {
-      newErrors.address = "Address is required.";
+      newErrors.address =
+        "Address is required.";
     }
 
     setErrors(newErrors);
 
-    return Object.keys(newErrors).length === 0;
+    return (
+      Object.keys(newErrors).length === 0
+    );
   };
 
   const handleCreateAccount = async () => {
@@ -115,9 +142,11 @@ export default function OrganizationRegisterScreen({
           },
           body: JSON.stringify({
             gstNumber: gstNumber.trim(),
-            organizationName: organizationName.trim(),
+            organizationName:
+              organizationName.trim(),
             email: email.trim(),
-            mobileNumber: mobileNumber.trim(),
+            mobileNumber:
+              mobileNumber.trim(),
             address: address.trim(),
           }),
         }
@@ -125,27 +154,32 @@ export default function OrganizationRegisterScreen({
 
       const data = await response.json();
 
-      console.log("Organization register status:", response.status);
-      console.log("Organization register response:", data);
-
       if (!response.ok) {
         setErrors({
-          api: data?.message || "Organization registration failed.",
+          api:
+            data?.message ||
+            "Organization registration failed.",
         });
+
         return;
       }
 
-      const code = data?.organization?.organizationCode;
+      const code =
+        data?.organization?.organizationCode;
 
       if (!code) {
         setErrors({
-          api: "Organization code was not returned by the server.",
+          api:
+            "Organization code was not returned by the server.",
         });
+
         return;
       }
 
       setOrganizationCode(code);
+      setCopied(false);
       setShowCodePopup(true);
+
       clearForm();
     } catch (registerError) {
       const message =
@@ -166,252 +200,624 @@ export default function OrganizationRegisterScreen({
       return;
     }
 
-    await Clipboard.setStringAsync(organizationCode);
+    await Clipboard.setStringAsync(
+      organizationCode
+    );
+
+    setCopied(true);
   };
 
   const handleClosePopup = () => {
     setShowCodePopup(false);
+    setCopied(false);
+
     onBack?.();
   };
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
+      <StatusBar
+        barStyle="dark-content"
+        backgroundColor="#ffffff"
+      />
 
       <KeyboardAvoidingView
         style={styles.keyboardView}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 20}
+        behavior={
+          Platform.OS === "ios"
+            ? "padding"
+            : "height"
+        }
+        keyboardVerticalOffset={
+          Platform.OS === "ios"
+            ? 0
+            : 20
+        }
       >
+        {/* Header */}
+        <View style={styles.header}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+            hitSlop={10}
+            style={({ pressed }) => [
+              styles.backButton,
+              pressed &&
+                styles.backButtonPressed,
+            ]}
+            onPress={onBack}
+          >
+            <Ionicons
+              name="arrow-back"
+              size={23}
+              color="#111827"
+            />
+          </Pressable>
+
+          <Text
+            allowFontScaling={false}
+            style={styles.headerTitle}
+          >
+            Create account
+          </Text>
+
+          <View style={styles.headerRightSpace} />
+        </View>
+
         <ScrollView
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={
+            styles.scrollContent
+          }
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          <View style={styles.header}>
-            <Pressable onPress={onBack} hitSlop={10}>
-              <Text allowFontScaling={false} style={styles.backIcon}>
-                ←
-              </Text>
-            </Pressable>
+          {/* Intro */}
+          <View style={styles.intro}>
+            <View style={styles.introIcon}>
+              <Ionicons
+                name="business-outline"
+                size={24}
+                color="#4d3fe6"
+              />
+            </View>
 
-            <Text allowFontScaling={false} style={styles.headerTitle}>
-              Create account
+            <View style={styles.introCopy}>
+              <Text style={styles.introTitle}>
+                Organization Registration
+              </Text>
+
+              <Text style={styles.introText}>
+                Register using GST, or provide your
+                organization details manually.
+              </Text>
+            </View>
+          </View>
+
+          {/* GST */}
+          <View style={styles.sectionCard}>
+            <SectionHeader
+              icon="document-text-outline"
+              title="Register with GST"
+              subtitle="Use GST number for a faster registration"
+            />
+
+            <FieldLabel
+              label="GST Number"
+              optional
+            />
+
+            <InputBox icon="receipt-outline">
+              <TextInput
+                style={styles.input}
+                placeholder="Enter your GST number"
+                placeholderTextColor="#9ca3af"
+                autoCapitalize="characters"
+                value={gstNumber}
+                onChangeText={(text) => {
+                  setGstNumber(text);
+
+                  if (
+                    text.trim().length > 0
+                  ) {
+                    setErrors({});
+                  } else {
+                    clearError();
+                  }
+                }}
+              />
+            </InputBox>
+
+            <Text style={styles.gstHint}>
+              If you enter a GST number, the fields
+              below are optional.
             </Text>
           </View>
 
-          <View style={styles.form}>
-            <Text allowFontScaling={false} style={styles.label}>
-              GST Number
-            </Text>
+          {/* OR divider */}
+          <View style={styles.dividerRow}>
+            <View style={styles.dividerLine} />
 
-            <TextInput
-              style={styles.input}
-              placeholder="Enter your GST number"
-              placeholderTextColor="#d6d6d6"
-              autoCapitalize="characters"
-              value={gstNumber}
-              onChangeText={(text) => {
-                setGstNumber(text);
-
-                // GST type panna below field errors remove aagum.
-                if (text.trim().length > 0) {
-                  setErrors({});
-                }
-              }}
-            />
-
-            <View style={styles.dividerRow}>
-              <View style={styles.dividerLine} />
-
-              <Text allowFontScaling={false} style={styles.dividerText}>
-                or
+            <View style={styles.orBadge}>
+              <Text style={styles.dividerText}>
+                OR
               </Text>
-
-              <View style={styles.dividerLine} />
             </View>
 
-            <Text allowFontScaling={false} style={styles.label}>
-              Organization Name
-            </Text>
+            <View style={styles.dividerLine} />
+          </View>
 
-            <TextInput
-              style={[
-                styles.input,
-                errors.organizationName && styles.inputError,
-              ]}
-              placeholder="Enter the Organization name"
-              placeholderTextColor="#d6d6d6"
-              autoCapitalize="words"
-              value={organizationName}
-              onChangeText={(text) => {
-                setOrganizationName(text);
-                setErrors((prev) => ({
-                  ...prev,
-                  organizationName: undefined,
-                }));
-              }}
+          {/* Manual details */}
+          <View style={styles.sectionCard}>
+            <SectionHeader
+              icon="create-outline"
+              title="Organization Details"
+              subtitle="Required only when GST is not provided"
             />
 
-            {errors.organizationName ? (
-              <Text allowFontScaling={false} style={styles.fieldErrorText}>
-                {errors.organizationName}
-              </Text>
-            ) : null}
-
-            <Text allowFontScaling={false} style={styles.label}>
-              Email Address
-            </Text>
-
-            <TextInput
-              style={[styles.input, errors.email && styles.inputError]}
-              placeholder="john.e07@gmail.com"
-              placeholderTextColor="#d6d6d6"
-              keyboardType="email-address"
-              autoCapitalize="none"
-              autoCorrect={false}
-              value={email}
-              onChangeText={(text) => {
-                setEmail(text);
-                setErrors((prev) => ({
-                  ...prev,
-                  email: undefined,
-                }));
-              }}
+            <FieldLabel
+              label="Organization Name"
+              required={!gstNumber.trim()}
             />
 
-            {errors.email ? (
-              <Text allowFontScaling={false} style={styles.fieldErrorText}>
-                {errors.email}
-              </Text>
-            ) : null}
+            <InputBox
+              icon="business-outline"
+              error={Boolean(
+                errors.organizationName
+              )}
+            >
+              <TextInput
+                style={styles.input}
+                placeholder="Enter organization name"
+                placeholderTextColor="#9ca3af"
+                autoCapitalize="words"
+                value={organizationName}
+                onChangeText={(text) => {
+                  setOrganizationName(text);
+                  clearError(
+                    "organizationName"
+                  );
+                }}
+              />
+            </InputBox>
 
-            <Text allowFontScaling={false} style={styles.label}>
-              Mobile Number
-            </Text>
-
-            <TextInput
-              style={[styles.input, errors.mobileNumber && styles.inputError]}
-              placeholder="+91 98567 41236"
-              placeholderTextColor="#d6d6d6"
-              keyboardType="phone-pad"
-              value={mobileNumber}
-              onChangeText={(text) => {
-                setMobileNumber(text);
-                setErrors((prev) => ({
-                  ...prev,
-                  mobileNumber: undefined,
-                }));
-              }}
+            <FieldError
+              message={
+                errors.organizationName
+              }
             />
 
-            {errors.mobileNumber ? (
-              <Text allowFontScaling={false} style={styles.fieldErrorText}>
-                {errors.mobileNumber}
-              </Text>
-            ) : null}
+            <FieldLabel
+              label="Email Address"
+              required={!gstNumber.trim()}
+            />
 
-            <Text allowFontScaling={false} style={styles.label}>
-              Address
-            </Text>
+            <InputBox
+              icon="mail-outline"
+              error={Boolean(errors.email)}
+            >
+              <TextInput
+                style={styles.input}
+                placeholder="john.e07@gmail.com"
+                placeholderTextColor="#9ca3af"
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+                value={email}
+                onChangeText={(text) => {
+                  setEmail(text);
+                  clearError("email");
+                }}
+              />
+            </InputBox>
 
-            <TextInput
-              style={[styles.input, errors.address && styles.inputError]}
-              placeholder="Enter your address"
-              placeholderTextColor="#d6d6d6"
+            <FieldError
+              message={errors.email}
+            />
+
+            <FieldLabel
+              label="Mobile Number"
+              required={!gstNumber.trim()}
+            />
+
+            <InputBox
+              icon="call-outline"
+              error={Boolean(
+                errors.mobileNumber
+              )}
+            >
+              <TextInput
+                style={styles.input}
+                placeholder="+91 98567 41236"
+                placeholderTextColor="#9ca3af"
+                keyboardType="phone-pad"
+                value={mobileNumber}
+                onChangeText={(text) => {
+                  setMobileNumber(text);
+                  clearError(
+                    "mobileNumber"
+                  );
+                }}
+              />
+            </InputBox>
+
+            <FieldError
+              message={
+                errors.mobileNumber
+              }
+            />
+
+            <FieldLabel
+              label="Address"
+              required={!gstNumber.trim()}
+            />
+
+            <InputBox
+              icon="location-outline"
+              error={Boolean(errors.address)}
               multiline
-              textAlignVertical="center"
-              value={address}
-              onChangeText={(text) => {
-                setAddress(text);
-                setErrors((prev) => ({
-                  ...prev,
-                  address: undefined,
-                }));
-              }}
+            >
+              <TextInput
+                style={[
+                  styles.input,
+                  styles.addressInput,
+                ]}
+                placeholder="Enter your address"
+                placeholderTextColor="#9ca3af"
+                multiline
+                textAlignVertical="top"
+                value={address}
+                onChangeText={(text) => {
+                  setAddress(text);
+                  clearError("address");
+                }}
+              />
+            </InputBox>
+
+            <FieldError
+              message={errors.address}
             />
+          </View>
 
-            {errors.address ? (
-              <Text allowFontScaling={false} style={styles.fieldErrorText}>
-                {errors.address}
-              </Text>
-            ) : null}
+          {/* API error */}
+          {errors.api ? (
+            <View style={styles.apiErrorBox}>
+              <Ionicons
+                name="alert-circle-outline"
+                size={18}
+                color="#dc2626"
+              />
 
-            {errors.api ? (
-              <Text allowFontScaling={false} style={styles.apiErrorText}>
+              <Text style={styles.apiErrorText}>
                 {errors.api}
               </Text>
-            ) : null}
-
-            <View style={styles.bottomArea}>
-              <Pressable
-                style={({ pressed }) => [
-                  styles.createButton,
-                  (pressed || submitting) && styles.createButtonPressed,
-                ]}
-                onPress={handleCreateAccount}
-                disabled={submitting}
-              >
-                <Text allowFontScaling={false} style={styles.createButtonText}>
-                  {submitting ? "Creating..." : "Create account"}
-                </Text>
-              </Pressable>
-
-              <Text allowFontScaling={false} style={styles.termsText}>
-                By registering you agree to our{" "}
-                <Text style={styles.termsLink}>Terms & Privacy Policy</Text>
-              </Text>
             </View>
-          </View>
+          ) : null}
+
+          {/* Create */}
+          <Pressable
+            accessibilityRole="button"
+            disabled={submitting}
+            style={({ pressed }) => [
+              styles.createButton,
+
+              pressed &&
+                !submitting &&
+                styles.createButtonPressed,
+
+              submitting &&
+                styles.createButtonDisabled,
+            ]}
+            onPress={handleCreateAccount}
+          >
+            {submitting ? (
+              <ActivityIndicator
+                color="#ffffff"
+              />
+            ) : (
+              <>
+                <Text
+                  allowFontScaling={false}
+                  style={
+                    styles.createButtonText
+                  }
+                >
+                  Create organization
+                </Text>
+
+                <Ionicons
+                  name="arrow-forward"
+                  size={20}
+                  color="#ffffff"
+                />
+              </>
+            )}
+          </Pressable>
+
+          <Text
+            allowFontScaling={false}
+            style={styles.termsText}
+          >
+            By registering you agree to our{" "}
+            <Text style={styles.termsLink}>
+              Terms & Privacy Policy
+            </Text>
+          </Text>
         </ScrollView>
       </KeyboardAvoidingView>
 
+      {/* Organization code popup */}
       <Modal
         visible={showCodePopup}
         transparent
         animationType="fade"
         statusBarTranslucent
-        onRequestClose={handleClosePopup}
+        onRequestClose={
+          handleClosePopup
+        }
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalBox}>
             <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Close organization code"
               style={styles.closeButton}
-              onPress={handleClosePopup}
+              onPress={
+                handleClosePopup
+              }
               hitSlop={10}
             >
-              <Ionicons name="close" size={22} color="#111827" />
+              <Ionicons
+                name="close"
+                size={21}
+                color="#4b5563"
+              />
             </Pressable>
 
-            <Image
-              source={popupLogo}
-              resizeMode="contain"
-              style={styles.modalLogo}
-            />
+            <View
+              style={styles.modalLogoWrap}
+            >
+              <Image
+                source={popupLogo}
+                resizeMode="contain"
+                style={styles.modalLogo}
+              />
+            </View>
 
-            <Text allowFontScaling={false} style={styles.modalTitle}>
-              Welcome back
+            <View style={styles.successIcon}>
+              <Ionicons
+                name="checkmark"
+                size={24}
+                color="#16a34a"
+              />
+            </View>
+
+            <Text
+              allowFontScaling={false}
+              style={styles.modalTitle}
+            >
+              Organization created
             </Text>
 
-            <Text allowFontScaling={false} style={styles.modalLabel}>
-              Your Organization Code
+            <Text
+              allowFontScaling={false}
+              style={styles.modalDescription}
+            >
+              Save this code. Users can enter it
+              when joining your organization.
+            </Text>
+
+            <Text
+              allowFontScaling={false}
+              style={styles.modalLabel}
+            >
+              Organization Code
             </Text>
 
             <View style={styles.codeBox}>
-              <Text allowFontScaling={false} style={styles.codeText}>
+              <Ionicons
+                name="key-outline"
+                size={19}
+                color="#4d3fe6"
+              />
+
+              <Text
+                selectable
+                allowFontScaling={false}
+                style={styles.codeText}
+              >
                 {organizationCode}
               </Text>
             </View>
 
-            <Pressable style={styles.copyButton} onPress={handleCopyCode}>
-              <Text allowFontScaling={false} style={styles.copyButtonText}>
-                COPY
+            <Pressable
+              accessibilityRole="button"
+              style={({ pressed }) => [
+                styles.copyButton,
+
+                pressed &&
+                  styles.copyButtonPressed,
+              ]}
+              onPress={handleCopyCode}
+            >
+              <Ionicons
+                name={
+                  copied
+                    ? "checkmark-outline"
+                    : "copy-outline"
+                }
+                size={18}
+                color="#ffffff"
+              />
+
+              <Text
+                allowFontScaling={false}
+                style={
+                  styles.copyButtonText
+                }
+              >
+                {copied
+                  ? "Copied"
+                  : "Copy Code"}
+              </Text>
+            </Pressable>
+
+            <Pressable
+              style={styles.continueButton}
+              onPress={handleClosePopup}
+            >
+              <Text
+                style={
+                  styles.continueButtonText
+                }
+              >
+                Back to Login
               </Text>
             </Pressable>
           </View>
         </View>
       </Modal>
     </SafeAreaView>
+  );
+}
+
+function SectionHeader({
+  icon,
+  title,
+  subtitle,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  subtitle: string;
+}) {
+  return (
+    <View style={styles.sectionHeader}>
+      <View style={styles.sectionIcon}>
+        <Ionicons
+          name={icon}
+          size={19}
+          color="#4d3fe6"
+        />
+      </View>
+
+      <View style={styles.sectionCopy}>
+        <Text style={styles.sectionTitle}>
+          {title}
+        </Text>
+
+        <Text
+          style={styles.sectionSubtitle}
+        >
+          {subtitle}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+function FieldLabel({
+  label,
+  required = false,
+  optional = false,
+}: {
+  label: string;
+  required?: boolean;
+  optional?: boolean;
+}) {
+  return (
+    <View style={styles.fieldLabelRow}>
+      <Text style={styles.label}>
+        {label}
+      </Text>
+
+      {required ? (
+        <Text style={styles.required}>
+          *
+        </Text>
+      ) : null}
+
+      {optional ? (
+        <Text style={styles.optional}>
+          Optional
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
+function InputBox({
+  icon,
+  error = false,
+  multiline = false,
+  children,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  error?: boolean;
+  multiline?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <View
+      style={[
+        styles.inputBox,
+
+        multiline &&
+          styles.inputBoxMultiline,
+
+        error &&
+          styles.inputError,
+      ]}
+    >
+      <View
+        style={[
+          styles.inputIcon,
+
+          multiline &&
+            styles.inputIconMultiline,
+        ]}
+      >
+        <Ionicons
+          name={icon}
+          size={18}
+          color={
+            error
+              ? "#dc2626"
+              : "#4d3fe6"
+          }
+        />
+      </View>
+
+      {children}
+    </View>
+  );
+}
+
+function FieldError({
+  message,
+}: {
+  message?: string;
+}) {
+  if (!message) {
+    return (
+      <View
+        style={styles.errorSpacer}
+      />
+    );
+  }
+
+  return (
+    <View style={styles.fieldErrorRow}>
+      <Ionicons
+        name="alert-circle-outline"
+        size={14}
+        color="#dc2626"
+      />
+
+      <Text
+        style={styles.fieldErrorText}
+      >
+        {message}
+      </Text>
+    </View>
   );
 }
 
@@ -423,219 +829,666 @@ const styles = StyleSheet.create({
 
   keyboardView: {
     flex: 1,
+    backgroundColor: "#f7f7fc",
+  },
+
+  header: {
+    minHeight: 62,
+
     backgroundColor: "#ffffff",
+
+    paddingHorizontal: 18,
+
+    flexDirection: "row",
+    alignItems: "center",
+
+    borderBottomWidth: 1,
+    borderBottomColor: "#efedf7",
+  },
+
+  backButton: {
+    width: 38,
+    height: 38,
+
+    borderRadius: 19,
+
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  backButtonPressed: {
+    backgroundColor: "#f3f4f6",
+  },
+
+  headerTitle: {
+    flex: 1,
+
+    color: "#111827",
+
+    fontSize: 19,
+    lineHeight: 24,
+
+    fontWeight: "900",
+
+    textAlign: "center",
+  },
+
+  headerRightSpace: {
+    width: 38,
+    height: 38,
   },
 
   scrollContent: {
     flexGrow: 1,
-    backgroundColor: "#ffffff",
+
+    backgroundColor: "#f7f7fc",
+
     paddingHorizontal: 18,
-    paddingTop: 36,
-    paddingBottom: 34,
+    paddingTop: 18,
+    paddingBottom: 44,
   },
 
-  header: {
+  intro: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 26,
+
+    gap: 12,
+
+    marginBottom: 18,
   },
 
-  backIcon: {
-    color: "#111827",
-    fontSize: 30,
-    fontWeight: "400",
-    marginRight: 14,
+  introIcon: {
+    width: 48,
+    height: 48,
+
+    borderRadius: 15,
+
+    backgroundColor: "#efedff",
+
+    alignItems: "center",
+    justifyContent: "center",
   },
 
-  headerTitle: {
-    color: "#111827",
-    fontSize: 21,
+  introCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+
+  introTitle: {
+    color: "#171329",
+
+    fontSize: 19,
+    lineHeight: 24,
+
     fontWeight: "900",
   },
 
-  form: {
-    flex: 1,
+  introText: {
+    color: "#8b8f9c",
+
+    fontSize: 11,
+    lineHeight: 17,
+
+    fontWeight: "600",
+
+    marginTop: 3,
+  },
+
+  sectionCard: {
     width: "100%",
+
+    backgroundColor: "#ffffff",
+
+    borderRadius: 18,
+
+    borderWidth: 1,
+    borderColor: "#eceaf7",
+
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 14,
+
+    marginBottom: 14,
+  },
+
+  sectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+
+    gap: 10,
+
+    marginBottom: 17,
+  },
+
+  sectionIcon: {
+    width: 36,
+    height: 36,
+
+    borderRadius: 11,
+
+    backgroundColor: "#efedff",
+
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  sectionCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+
+  sectionTitle: {
+    color: "#171329",
+
+    fontSize: 15,
+    lineHeight: 20,
+
+    fontWeight: "900",
+  },
+
+  sectionSubtitle: {
+    color: "#9ca3af",
+
+    fontSize: 10,
+    lineHeight: 15,
+
+    fontWeight: "600",
+
+    marginTop: 1,
+  },
+
+  fieldLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+
+    marginBottom: 7,
   },
 
   label: {
-    color: "#111827",
-    fontSize: 13,
-    fontWeight: "500",
-    marginBottom: 10,
+    color: "#374151",
+
+    fontSize: 12,
+    lineHeight: 17,
+
+    fontWeight: "800",
   },
 
-  input: {
-    width: "100%",
-    minHeight: 39,
-    backgroundColor: "#f3f3f3",
-    borderRadius: 3,
-    paddingHorizontal: 16,
+  required: {
+    color: "#dc2626",
+
     fontSize: 13,
-    color: "#111111",
-    marginBottom: 6,
+
+    fontWeight: "900",
+
+    marginLeft: 2,
+  },
+
+  optional: {
+    color: "#9ca3af",
+
+    fontSize: 9,
+
+    fontWeight: "700",
+
+    marginLeft: 7,
+
+    backgroundColor: "#f3f4f6",
+
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+
+    borderRadius: 7,
+
+    overflow: "hidden",
+  },
+
+  inputBox: {
+    width: "100%",
+
+    minHeight: 54,
+
+    backgroundColor: "#fafaff",
+
+    borderWidth: 1,
+    borderColor: "#deddf0",
+
+    borderRadius: 14,
+
+    paddingHorizontal: 10,
+
+    flexDirection: "row",
+    alignItems: "center",
+  },
+
+  inputBoxMultiline: {
+    minHeight: 100,
+
+    alignItems: "flex-start",
+
+    paddingTop: 10,
+    paddingBottom: 10,
   },
 
   inputError: {
-    borderWidth: 1,
     borderColor: "#dc2626",
+    backgroundColor: "#fffafa",
+  },
+
+  inputIcon: {
+    width: 34,
+    height: 34,
+
+    borderRadius: 10,
+
+    backgroundColor: "#efedff",
+
+    alignItems: "center",
+    justifyContent: "center",
+
+    marginRight: 8,
+  },
+
+  inputIconMultiline: {
+    marginTop: 1,
+  },
+
+  input: {
+    flex: 1,
+
+    minHeight: 52,
+
+    color: "#111827",
+
+    fontSize: 14,
+
+    paddingVertical: 0,
+  },
+
+  addressInput: {
+    minHeight: 78,
+
+    paddingTop: 7,
+    paddingBottom: 7,
+  },
+
+  fieldErrorRow: {
+    flexDirection: "row",
+    alignItems: "center",
+
+    gap: 5,
+
+    minHeight: 29,
+
+    paddingTop: 5,
   },
 
   fieldErrorText: {
+    flex: 1,
+
     color: "#dc2626",
-    fontSize: 11,
+
+    fontSize: 10,
+    lineHeight: 15,
+
     fontWeight: "600",
-    marginBottom: 12,
   },
 
-  apiErrorText: {
-    color: "#dc2626",
-    fontSize: 12,
-    fontWeight: "700",
-    marginTop: 2,
-    marginBottom: 14,
-    textAlign: "center",
+  errorSpacer: {
+    height: 13,
+  },
+
+  gstHint: {
+    color: "#8b8f9c",
+
+    fontSize: 10,
+    lineHeight: 16,
+
+    fontWeight: "600",
+
+    marginTop: 8,
   },
 
   dividerRow: {
     width: "100%",
+
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
+
+    marginVertical: 2,
     marginBottom: 16,
-    marginTop: 8,
   },
 
   dividerLine: {
-    width: 64,
+    flex: 1,
+
     height: 1,
-    backgroundColor: "#d8d8d8",
+
+    backgroundColor: "#dedde8",
+  },
+
+  orBadge: {
+    minWidth: 38,
+    height: 26,
+
+    borderRadius: 13,
+
+    backgroundColor: "#efedff",
+
+    alignItems: "center",
+    justifyContent: "center",
+
+    marginHorizontal: 10,
   },
 
   dividerText: {
-    color: "#111827",
-    fontSize: 13,
-    marginHorizontal: 12,
+    color: "#4d3fe6",
+
+    fontSize: 10,
+
+    fontWeight: "900",
   },
 
-  bottomArea: {
+  apiErrorBox: {
+    width: "100%",
+
+    flexDirection: "row",
+    alignItems: "flex-start",
+
+    gap: 8,
+
+    backgroundColor: "#fef2f2",
+
+    borderWidth: 1,
+    borderColor: "#fecaca",
+
+    borderRadius: 13,
+
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+
+    marginBottom: 14,
+  },
+
+  apiErrorText: {
     flex: 1,
-    justifyContent: "flex-end",
-    paddingTop: 70,
+
+    color: "#dc2626",
+
+    fontSize: 11,
+    lineHeight: 17,
+
+    fontWeight: "700",
   },
 
   createButton: {
-    width: "67%",
-    height: 43,
+    width: "100%",
+
+    minHeight: 56,
+
     backgroundColor: "#4d3fe6",
-    borderRadius: 7,
-    justifyContent: "center",
+
+    borderRadius: 14,
+
+    flexDirection: "row",
     alignItems: "center",
-    alignSelf: "center",
-    marginBottom: 30,
+    justifyContent: "center",
+
+    gap: 9,
+
+    shadowColor: "#4d3fe6",
+    shadowOpacity: 0.18,
+    shadowRadius: 8,
+
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+
+    elevation: 3,
+
+    marginTop: 2,
   },
 
   createButtonPressed: {
-    opacity: 0.85,
+    opacity: 0.86,
+
+    transform: [
+      {
+        scale: 0.99,
+      },
+    ],
+  },
+
+  createButtonDisabled: {
+    opacity: 0.65,
   },
 
   createButtonText: {
     color: "#ffffff",
-    fontSize: 14,
+
+    fontSize: 15,
+
     fontWeight: "900",
   },
 
   termsText: {
-    color: "#111827",
-    fontSize: 11,
+    color: "#7c818d",
+
+    fontSize: 10,
+    lineHeight: 16,
+
+    fontWeight: "600",
+
     textAlign: "center",
-    lineHeight: 17,
+
+    marginTop: 15,
+
+    paddingHorizontal: 20,
   },
 
   termsLink: {
     color: "#4d3fe6",
+
     fontWeight: "900",
   },
 
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.45)",
+
+    backgroundColor:
+      "rgba(20,16,48,0.58)",
+
     justifyContent: "center",
     alignItems: "center",
-    paddingHorizontal: 24,
+
+    paddingHorizontal: 20,
   },
 
   modalBox: {
     width: "100%",
-    maxWidth: 340,
+    maxWidth: 370,
+
     backgroundColor: "#ffffff",
-    borderRadius: 18,
+
+    borderRadius: 22,
+
     paddingHorizontal: 20,
     paddingTop: 24,
-    paddingBottom: 26,
+    paddingBottom: 20,
+
     alignItems: "center",
+
+    shadowColor: "#171329",
+    shadowOpacity: 0.2,
+    shadowRadius: 16,
+
+    shadowOffset: {
+      width: 0,
+      height: 7,
+    },
+
+    elevation: 10,
   },
 
   closeButton: {
     position: "absolute",
-    top: 12,
-    right: 12,
-    zIndex: 1,
+
+    top: 14,
+    right: 14,
+
+    width: 36,
+    height: 36,
+
+    borderRadius: 12,
+
+    backgroundColor: "#f3f4f6",
+
+    alignItems: "center",
+    justifyContent: "center",
+
+    zIndex: 2,
+  },
+
+  modalLogoWrap: {
+    alignItems: "center",
+
+    marginBottom: 4,
   },
 
   modalLogo: {
-    width: 74,
-    height: 74,
-    marginBottom: 10,
+    width: 68,
+    height: 68,
+  },
+
+  successIcon: {
+    width: 46,
+    height: 46,
+
+    borderRadius: 23,
+
+    backgroundColor: "#ecfdf3",
+
+    alignItems: "center",
+    justifyContent: "center",
+
+    marginTop: 5,
+    marginBottom: 11,
   },
 
   modalTitle: {
-    color: "#111827",
-    fontSize: 22,
+    color: "#171329",
+
+    fontSize: 20,
+    lineHeight: 26,
+
     fontWeight: "900",
-    marginBottom: 16,
+
+    textAlign: "center",
+  },
+
+  modalDescription: {
+    color: "#8b8f9c",
+
+    fontSize: 11,
+    lineHeight: 17,
+
+    fontWeight: "600",
+
+    textAlign: "center",
+
+    maxWidth: 270,
+
+    marginTop: 6,
+    marginBottom: 20,
   },
 
   modalLabel: {
-    color: "#111827",
-    fontSize: 13,
-    fontWeight: "700",
-    marginBottom: 10,
+    alignSelf: "flex-start",
+
+    color: "#374151",
+
+    fontSize: 11,
+
+    fontWeight: "800",
+
+    marginBottom: 7,
   },
 
   codeBox: {
     width: "100%",
-    minHeight: 48,
-    backgroundColor: "#f8f8fb",
+    minHeight: 54,
+
+    backgroundColor: "#f7f6ff",
+
     borderWidth: 1,
-    borderColor: "#e5e7eb",
-    borderRadius: 10,
-    justifyContent: "center",
+    borderColor: "#ddd7ff",
+
+    borderRadius: 14,
+
+    flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
+
+    gap: 8,
+
     paddingHorizontal: 14,
-    marginBottom: 18,
+
+    marginBottom: 12,
   },
 
   codeText: {
-    color: "#111827",
-    fontSize: 16,
+    color: "#4d3fe6",
+
+    fontSize: 17,
+
     fontWeight: "900",
-    letterSpacing: 1.2,
+
+    letterSpacing: 1.3,
   },
 
   copyButton: {
     width: "100%",
-    height: 42,
+    minHeight: 50,
+
     backgroundColor: "#4d3fe6",
-    borderRadius: 8,
-    justifyContent: "center",
+
+    borderRadius: 13,
+
+    flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
+
+    gap: 7,
+  },
+
+  copyButtonPressed: {
+    opacity: 0.84,
   },
 
   copyButtonText: {
     color: "#ffffff",
+
     fontSize: 13,
+
     fontWeight: "900",
-    letterSpacing: 0.8,
+  },
+
+  continueButton: {
+    marginTop: 10,
+
+    minHeight: 42,
+
+    paddingHorizontal: 18,
+
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  continueButtonText: {
+    color: "#4d3fe6",
+
+    fontSize: 12,
+
+    fontWeight: "900",
   },
 });
