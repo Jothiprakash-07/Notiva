@@ -1,3 +1,4 @@
+import CompletionNoteModal from "../common/CompletionNoteModal";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useIsFocused } from "@react-navigation/native";
 import { router } from "expo-router";
@@ -113,6 +114,8 @@ export default function ActionRequiredStack({
 
   const [busy, setBusy] =
     useState(false);
+
+  const [showCompletion, setShowCompletion] = useState(false);
 
   const [menu, setMenu] =
     useState(false);
@@ -330,6 +333,7 @@ export default function ActionRequiredStack({
   useEffect(() => {
     if (
       focused &&
+      !showCompletion &&
       front &&
       !locked.current &&
       !items.some(
@@ -348,6 +352,7 @@ export default function ActionRequiredStack({
   }, [
     items,
     focused,
+    showCompletion,
     front,
     advance,
   ]);
@@ -368,7 +373,8 @@ export default function ActionRequiredStack({
       | "done"
       | "skip"
       | "delete",
-    direction = 1
+    direction = 1,
+    completionNote?: string
   ) => {
     if (
       !front ||
@@ -387,7 +393,8 @@ export default function ActionRequiredStack({
       ) {
         const saved =
           await toggleComplete(
-            front.id
+            front.id,
+            completionNote
           );
 
         if (
@@ -431,6 +438,7 @@ export default function ActionRequiredStack({
       );
     }
 
+    if (action === "done") setShowCompletion(false);
     advance(
       front.id,
       direction
@@ -455,6 +463,7 @@ export default function ActionRequiredStack({
           .enabled(
             focused &&
               !menu &&
+              !showCompletion &&
               !busy
           )
           .activeOffsetX([
@@ -519,6 +528,7 @@ export default function ActionRequiredStack({
       [
         focused,
         menu,
+        showCompletion,
         busy,
         dragX,
         snapBack,
@@ -546,11 +556,13 @@ export default function ActionRequiredStack({
     }
 
     setMenu(false);
+    if (action === "done") {
+      if (!locked.current && front && !front.completed && getItemStatus(front) !== "Done") setShowCompletion(true);
+      return;
+    }
 
     Alert.alert(
-      action === "done"
-        ? "Mark as Done?"
-        : "Delete this item?",
+      "Delete this item?",
       front.title,
       [
         {
@@ -558,16 +570,8 @@ export default function ActionRequiredStack({
           style: "cancel",
         },
         {
-          text:
-            action ===
-            "done"
-              ? "Done"
-              : "Delete",
-          style:
-            action ===
-            "delete"
-              ? "destructive"
-              : "default",
+          text: "Delete",
+          style: "destructive",
           onPress: () => {
             void perform(
               action
@@ -1314,6 +1318,9 @@ export default function ActionRequiredStack({
           </View>
         </SafeAreaView>
       </GestureHandlerRootView>
+      <CompletionNoteModal visible={focused && showCompletion} itemTitle={front.title} saving={busy}
+        onClose={() => { if (!locked.current) setShowCompletion(false); }}
+        onConfirm={note => perform("done", 1, note)} />
     </Modal>
   );
 }

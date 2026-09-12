@@ -1,3 +1,4 @@
+import CompletionNoteModal from "../../../components/common/CompletionNoteModal";
 import { formatDate, formatTime } from "../../../utils/dateFormat";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import {
@@ -45,6 +46,8 @@ export default function DetailsScreen() {
 
   const [, setNow] =
     useState(Date.now());
+
+  const [showCompletion, setShowCompletion] = useState(false);
 
   const [busy, setBusy] =
     useState(false);
@@ -204,16 +207,17 @@ export default function DetailsScreen() {
       ]
     );
 
-  const complete = () =>
+  const complete = (note?: string) =>
     perform(async () => {
       const next =
         await toggleComplete(
-          item.id
+          item.id,
+          note
         );
 
-      if (next) {
-        setItem(next);
-      }
+      if (!next?.completed) throw new Error("Item could not be completed.");
+      setItem(next);
+      setShowCompletion(false);
     });
 
   const cancel = () =>
@@ -426,6 +430,13 @@ export default function DetailsScreen() {
           ) : null}
         </View>
 
+        {(status === "Done" || item.completed) && item.completionNote?.trim() ? (
+          <View style={styles.sectionCard}>
+            <SectionHeader icon="document-text-outline" title="Completion Note" />
+            <Text style={styles.descriptionText}>{item.completionNote}</Text>
+          </View>
+        ) : null}
+
         {/* Description separate for readability */}
         {item.description ? (
           <View style={styles.sectionCard}>
@@ -466,7 +477,7 @@ export default function DetailsScreen() {
                 busy &&
                   styles.buttonDisabled,
               ]}
-              onPress={complete}
+              onPress={() => { if (!busy && !readOnly) setShowCompletion(true); }}
             >
               <Ionicons
                 name="checkmark-circle-outline"
@@ -601,6 +612,8 @@ export default function DetailsScreen() {
           </Pressable>
         </View>
       </ScrollView>
+      <CompletionNoteModal visible={showCompletion} itemTitle={item.title} saving={busy}
+        onClose={() => { if (!busy) setShowCompletion(false); }} onConfirm={complete} />
     </SafeAreaView>
   );
 }

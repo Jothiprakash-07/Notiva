@@ -1,3 +1,5 @@
+import DateTimePicker, { DateTimePickerEvent } from "@react-native-community/datetimepicker";
+import CompletionNoteModal from "../../components/common/CompletionNoteModal";
 import { formatDate, formatTime } from "../../utils/dateFormat";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import {
@@ -7,15 +9,22 @@ import {
 } from "expo-router";
 import {
   useCallback,
+  useEffect,
+  useRef,
   useMemo,
   useState,
 } from "react";
 import {
   Alert,
+  BackHandler,
+  Keyboard,
+  Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -23,6 +32,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import ReminderCard from "../../components/home/ReminderCard";
 import {
   getItems,
+  deleteItem,
   toggleComplete,
 } from "../../services/itemStorage";
 import { ReminderItem } from "../../types/item";
@@ -33,6 +43,20 @@ import {
   withCalculatedStatus,
 } from "../../utils/itemStatus";
 import { sortItemsByStatus } from "../../utils/itemSorting";
+
+type DateRange = { from: Date | null; to: Date | null };
+type DateField = "from" | "to";
+
+// Calendar boundaries use the phone's local timezone, including DST changes.
+function localDay(date: Date, nextDay = false): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + (nextDay ? 1 : 0));
+}
+
+function dateRangeLabel({ from, to }: DateRange): string {
+  if (from && to) return formatDate(from, "shortYear") + " - " + formatDate(to, "shortYear");
+  if (from) return "From " + formatDate(from, "shortYear");
+  return to ? "Up to " + formatDate(to, "shortYear") : "";
+}
 
 type ListFilter =
   | "all"
@@ -157,6 +181,88 @@ export default function RemindersScreen() {
       []
     );
 
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [deleting, setDeleting] = useState(false);
+  const deleteLock = useRef(false);
+  const selectionActive = useRef(false);
+  const selectionVersion = useRef(0);
+  const confirmationPending = useRef(false);
+  const exitSelection = useCallback(() => {
+    selectionVersion.current += 1;
+    selectionActive.current = false;
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+  }, []);
+
+  useFocusEffect(useCallback(() => {
+    const listener = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (deleteLock.current) return true;
+      if (!selectionActive.current) return false;
+      exitSelection();
+      return true;
+    });
+    return () => { listener.remove(); exitSelection(); };
+  }, [exitSelection]));
+
+  // Cover status filters changed through route params as well as the chips.
+  useEffect(() => { exitSelection(); }, [selectedFilter, exitSelection]);
+
+  const [searchText, setSearchText] = useState("");
+  const [dateRange, setDateRange] = useState<DateRange>({ from: null, to: null });
+  const [draftRange, setDraftRange] = useState<DateRange>({ from: null, to: null });
+  const [dateFilterVisible, setDateFilterVisible] = useState(false);
+  const [datePickerField, setDatePickerField] = useState<DateField | null>(null);
+  const [pickerDate, setPickerDate] = useState(new Date());
+  const hasDateFilter = Boolean(dateRange.from || dateRange.to);
+
+  const openDateFilter = () => {
+    if (deleteLock.current) return;
+    Keyboard.dismiss();
+    setDraftRange({ ...dateRange });
+    setDatePickerField(null);
+    setDateFilterVisible(true);
+  };
+  const closeDateFilter = () => {
+    setDatePickerField(null);
+    setDateFilterVisible(false);
+  };
+  const clearDateFilter = () => {
+    if (deleteLock.current) return;
+    exitSelection();
+    setDateRange({ from: null, to: null });
+    setDraftRange({ from: null, to: null });
+    closeDateFilter();
+  };
+  const applyDateFilter = () => {
+    if (draftRange.from && draftRange.to && draftRange.from > draftRange.to) {
+      Alert.alert("From date must be before To date.");
+      return;
+    }
+    if (deleteLock.current) return;
+    exitSelection();
+    setDateRange({ ...draftRange });
+    closeDateFilter();
+  };
+  const openDatePicker = (field: DateField) => {
+    setPickerDate(draftRange[field] ?? draftRange.from ?? draftRange.to ?? new Date());
+    setDatePickerField(field);
+  };
+  const selectPickerDate = (date: Date) => {
+    if (datePickerField) {
+      setDraftRange(current => ({ ...current, [datePickerField]: localDay(date) }));
+    }
+    setDatePickerField(null);
+  };
+  const onDatePickerChange = (event: DateTimePickerEvent, date?: Date) => {
+    if (event.type !== "set" || !date) {
+      setDatePickerField(null);
+      return;
+    }
+    if (Platform.OS === "ios") setPickerDate(date);
+    else selectPickerDate(date);
+  };
+
   const refresh =
     useCallback(async () => {
       const stored =
@@ -226,53 +332,119 @@ export default function RemindersScreen() {
     }, [])
   );
 
-  const filteredItems =
-    useMemo(() => {
-      if (
-        selectedFilter ===
-        "done"
-      ) {
-        return sortItemsByStatus(
-          items.filter(
-            isCountedAsDone
-          )
-        );
+  const filteredItems = useMemo(() => {
+    const query = searchText.trim().toLowerCase();
+    const from = dateRange.from ? localDay(dateRange.from).getTime() : null;
+    // Exclusive next-day bound includes every instant of the selected To Date.
+    const until = dateRange.to ? localDay(dateRange.to, true).getTime() : null;
+    const matching = items.filter(item => {
+      if (selectedFilter === "done" && !isCountedAsDone(item)) return false;
+      if (selectedFilter === "overdue" && !isCountedAsOverdue(item)) return false;
+      if (query && ![item.title, item.description, item.category, item.type]
+        .some(value => value?.toLowerCase().includes(query))) return false;
+      if (from !== null || until !== null) {
+        const startAt = new Date(item.startAt).getTime();
+        if (!Number.isFinite(startAt)) return false;
+        if (from !== null && startAt < from) return false;
+        if (until !== null && startAt >= until) return false;
       }
+      return true;
+    });
+    return sortItemsByStatus(matching);
+  }, [items, selectedFilter, searchText, dateRange]);
 
-      if (
-        selectedFilter ===
-        "overdue"
-      ) {
-        return sortItemsByStatus(
-          items.filter(
-            isCountedAsOverdue
-          )
-        );
-      }
+  useEffect(() => {
+    if (selectionMode && [...selectedIds].some(id => !filteredItems.some(item => item.id === id))) exitSelection();
+  }, [filteredItems, selectedIds, selectionMode, exitSelection]);
 
-      return sortItemsByStatus(
-        items
-      );
-    }, [
-      items,
-      selectedFilter,
-    ]);
+  const startSelection = (id: string) => {
+    if (deleteLock.current || selectionActive.current) return;
+    Keyboard.dismiss();
+    selectionVersion.current += 1;
+    selectionActive.current = true;
+    setSelectionMode(true);
+    setSelectedIds(new Set([id]));
+  };
+  const toggleSelection = (id: string) => {
+    if (deleteLock.current) return;
+    selectionVersion.current += 1;
+    setSelectedIds(previous => {
+      const next = new Set(previous);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+  const allVisibleSelected = filteredItems.length > 0 && filteredItems.every(item => selectedIds.has(item.id));
+  const selectAll = () => {
+    if (deleteLock.current) return;
+    selectionVersion.current += 1;
+    setSelectedIds(allVisibleSelected ? new Set() : new Set(filteredItems.map(item => item.id)));
+  };
+  const changeSearch = (text: string) => {
+    if (deleteLock.current) return;
+    exitSelection();
+    setSearchText(text);
+  };
+  const requestDelete = () => {
+    if (deleteLock.current || confirmationPending.current || !selectedIds.size) return;
+    const ids = filteredItems.filter(item => selectedIds.has(item.id)).map(item => item.id);
+    if (!ids.length) return;
+    const version = selectionVersion.current;
+    confirmationPending.current = true;
+    Alert.alert(ids.length === 1 ? "Delete this reminder?" : `Delete ${ids.length} reminders?`, "This action cannot be undone.", [
+      { text: "Cancel", style: "cancel", onPress: () => { confirmationPending.current = false; } },
+      { text: "Delete", style: "destructive", onPress: async () => {
+        confirmationPending.current = false;
+        // Changed filters, selection or focus invalidate an older confirmation.
+        if (deleteLock.current || version !== selectionVersion.current || !selectionActive.current) return;
+        deleteLock.current = true;
+        setDeleting(true);
+        try {
+          const results = await Promise.allSettled(ids.map(id => deleteItem(id)));
+          const deletedIds = new Set(ids.filter((_, index) => results[index].status === "fulfilled"));
+          const failed = results.length - deletedIds.size;
+          // Keep confirmed successes removed even if the storage reload fails.
+          setItems(current => current.filter(item => !deletedIds.has(item.id)));
+          let refreshed = true;
+          try { await refresh(); } catch { refreshed = false; }
+          exitSelection();
+          if (failed || !refreshed) {
+            Alert.alert("Could not finish deleting reminders",
+              `${deletedIds.size} deleted. ${failed ? `${failed} could not be deleted. Select them again to retry. ` : ""}${!refreshed ? "Could not refresh the list. Reopen Reminders to reload it." : ""}`);
+          } else {
+            Alert.alert(ids.length === 1 ? "Reminder deleted." : `${ids.length} reminders deleted.`);
+          }
+        } finally {
+          deleteLock.current = false;
+          setDeleting(false);
+        }
+      } },
+    ], { cancelable: true, onDismiss: () => { confirmationPending.current = false; } });
+  };
 
-  const handleToggle =
-    async (id: string) => {
-      try {
-        await toggleComplete(
-          id
-        );
+  const [completionItemId, setCompletionItemId] = useState<string | null>(null);
+  const [completionSaving, setCompletionSaving] = useState(false);
 
-        await refresh();
-      } catch {
-        Alert.alert(
-          "Could not complete item",
-          "Please try again."
-        );
-      }
-    };
+  const handleToggle = (id: string) => {
+    if (selectionActive.current || deleteLock.current) return;
+    const selected = items.find(item => item.id === id);
+    if (selected && !selected.completed && selected.status !== "Done") setCompletionItemId(id);
+  };
+
+  const confirmCompletion = async (note?: string) => {
+    if (!completionItemId || completionSaving) return;
+    setCompletionSaving(true);
+    try {
+      const updated = await toggleComplete(completionItemId, note);
+      if (!updated?.completed) throw new Error("Item could not be completed.");
+      await refresh();
+      setCompletionItemId(null);
+    } catch (error) {
+      Alert.alert("Could not complete item", error instanceof Error ? error.message : "Please try again.");
+    } finally {
+      setCompletionSaving(false);
+    }
+  };
 
   const empty =
     emptyContent(
@@ -378,6 +550,22 @@ export default function RemindersScreen() {
           </View>
         </View>
 
+        <View style={styles.searchRow}>
+          <View style={styles.searchBox}>
+            <Ionicons name="search-outline" size={18} color="#8b8f9c" />
+            <TextInput accessibilityLabel="Search reminders" placeholder="Search reminders" placeholderTextColor="#8b8f9c"
+              value={searchText} onChangeText={changeSearch} style={styles.searchInput} returnKeyType="search" />
+            {searchText ? <Pressable accessibilityRole="button" accessibilityLabel="Clear search" hitSlop={8} onPress={() => changeSearch("")}>
+              <Ionicons name="close-circle" size={18} color="#8b8f9c" />
+            </Pressable> : null}
+          </View>
+          <Pressable accessibilityRole="button" accessibilityLabel="Date Filter" onPress={openDateFilter}
+            style={({ pressed }) => [styles.dateFilterButton, hasDateFilter && styles.dateFilterActive, pressed && styles.filterPressed]}>
+            <Ionicons name="calendar-outline" size={17} color="#4d3fe6" />
+            <Text style={styles.filterText}>Date Filter</Text>
+          </Pressable>
+        </View>
+
         {/* Filters */}
         <ScrollView
           horizontal
@@ -456,6 +644,65 @@ export default function RemindersScreen() {
           )}
         </ScrollView>
 
+        {hasDateFilter ? (
+          <View style={styles.activeDateFilter}>
+            <Text style={styles.activeDateText}>{dateRangeLabel(dateRange)}</Text>
+            <Pressable accessibilityRole="button" accessibilityLabel="Clear Date Filter" hitSlop={8} onPress={clearDateFilter}>
+              <Ionicons name="close" size={18} color="#4d3fe6" />
+            </Pressable>
+          </View>
+        ) : null}
+
+        {selectionMode ? (
+          <View style={styles.selectionBar}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Exit selection mode"
+              hitSlop={8}
+              onPress={exitSelection}
+              style={styles.selectionIconButton}
+            >
+              <Ionicons name="close" size={21} color="#4d3fe6" />
+            </Pressable>
+
+            <Text style={styles.selectionCount}>
+              {selectedIds.size} {selectedIds.size === 1 ? "Selected" : "Selected"}
+            </Text>
+
+            <Pressable
+              accessibilityRole="button"
+              disabled={deleting || filteredItems.length === 0}
+              onPress={selectAll}
+              style={({ pressed }) => [
+                styles.selectAllButton,
+                pressed && styles.filterPressed,
+                (deleting || filteredItems.length === 0) && styles.selectionDisabled,
+              ]}
+            >
+              <Text style={styles.selectAllText}>
+                {allVisibleSelected ? "Clear All" : "Select All"}
+              </Text>
+            </Pressable>
+
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Delete selected reminders"
+              disabled={deleting || selectedIds.size === 0}
+              onPress={requestDelete}
+              style={({ pressed }) => [
+                styles.deleteSelectionButton,
+                pressed && styles.filterPressed,
+                (deleting || selectedIds.size === 0) && styles.selectionDisabled,
+              ]}
+            >
+              <Ionicons name="trash-outline" size={18} color="#ffffff" />
+              <Text style={styles.deleteSelectionText}>
+                {deleting ? "Deleting..." : "Delete"}
+              </Text>
+            </Pressable>
+          </View>
+        ) : null}
+
         {/* List */}
         <ScrollView
           style={styles.list}
@@ -524,6 +771,15 @@ export default function RemindersScreen() {
                           item.id
                         )
                       }
+                      selectionMode={selectionMode}
+                      selected={selectedIds.has(item.id)}
+                      onLongPress={() =>
+                        startSelection(item.id)
+                      }
+                      onSelect={() =>
+                        toggleSelection(item.id)
+                      }
+                      disabled={deleting}
                     />
                   </View>
                 );
@@ -554,7 +810,7 @@ export default function RemindersScreen() {
                   styles.emptyTitle
                 }
               >
-                {empty.title}
+                {hasDateFilter ? "No reminders found for this date range." : searchText.trim() ? "No matching reminders" : empty.title}
               </Text>
 
               <Text
@@ -562,18 +818,156 @@ export default function RemindersScreen() {
                   styles.emptyText
                 }
               >
-                {empty.text}
+                {hasDateFilter || searchText.trim() ? "Try adjusting your filters or search." : empty.text}
               </Text>
+              {hasDateFilter ? <Pressable accessibilityRole="button" onPress={clearDateFilter} style={styles.clearDateAction}>
+                <Text style={styles.filterText}>Clear Date Filter</Text>
+              </Pressable> : null}
             </View>
           )}
         </ScrollView>
       </View>
+      <Modal visible={dateFilterVisible} transparent animationType="fade" onRequestClose={closeDateFilter}>
+        <View style={styles.dateModalOverlay}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Dismiss date filter" style={StyleSheet.absoluteFillObject} onPress={closeDateFilter} />
+          <View style={styles.dateModalCard} accessibilityViewIsModal>
+            <View style={styles.dateModalHeader}>
+              <Text style={styles.sectionTitle}>Filter by Date</Text>
+              <Pressable accessibilityRole="button" accessibilityLabel="Close date filter" hitSlop={10} onPress={closeDateFilter}>
+                <Ionicons name="close" size={22} color="#6b7280" />
+              </Pressable>
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+              {(["from", "to"] as const).map(field => (
+                <View key={field} style={styles.dateFieldGroup}>
+                  <Text style={styles.dateFieldLabel}>{field === "from" ? "From Date" : "To Date"}</Text>
+                  <View style={styles.dateFieldRow}>
+                    <Pressable accessibilityRole="button" accessibilityLabel={field === "from" ? "Select From Date" : "Select To Date"}
+                      onPress={() => openDatePicker(field)} style={styles.dateField}>
+                      <Text style={[styles.dateFieldText, !draftRange[field] && styles.datePlaceholder]}>
+                        {draftRange[field] ? formatDate(draftRange[field]) : field === "from" ? "Select From Date" : "Select To Date"}
+                      </Text>
+                      <Ionicons name="calendar-outline" size={19} color="#4d3fe6" />
+                    </Pressable>
+                    {draftRange[field] ? <Pressable accessibilityRole="button" accessibilityLabel={field === "from" ? "Clear From Date" : "Clear To Date"}
+                      hitSlop={8} onPress={() => { setDatePickerField(null); setDraftRange(current => ({ ...current, [field]: null })); }}>
+                      <Ionicons name="close-circle-outline" size={20} color="#8b8f9c" />
+                    </Pressable> : null}
+                  </View>
+                </View>
+              ))}
+              {datePickerField ? <View>
+                <DateTimePicker value={pickerDate} mode="date" display={Platform.OS === "ios" ? "spinner" : "default"}
+                  onChange={onDatePickerChange} />
+                {Platform.OS === "ios" ? <Pressable accessibilityRole="button" onPress={() => selectPickerDate(pickerDate)} style={styles.clearDateAction}>
+                  <Text style={styles.filterText}>Select Date</Text>
+                </Pressable> : null}
+              </View> : null}
+              <View style={styles.dateModalActions}>
+                <Pressable accessibilityRole="button" onPress={clearDateFilter} style={styles.resetDateButton}><Text style={styles.filterText}>Reset</Text></Pressable>
+                <Pressable accessibilityRole="button" disabled={datePickerField !== null} onPress={applyDateFilter}
+                  style={[styles.applyDateButton, datePickerField !== null && styles.filterPressed]}>
+                  <Text style={styles.selectedFilterText}>Apply</Text>
+                </Pressable>
+              </View>
+              <Pressable accessibilityRole="button" onPress={closeDateFilter} style={styles.clearDateAction}><Text style={styles.datePlaceholder}>Cancel</Text></Pressable>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+      <CompletionNoteModal
+        visible={completionItemId !== null}
+        itemTitle={items.find(item => item.id === completionItemId)?.title}
+        saving={completionSaving}
+        onClose={() => { if (!completionSaving) setCompletionItemId(null); }}
+        onConfirm={confirmCompletion}
+      />
     </SafeAreaView>
   );
 }
 
 const styles =
   StyleSheet.create({
+    selectionBar: {
+      marginHorizontal: 18,
+      marginBottom: 12,
+      minHeight: 52,
+      paddingHorizontal: 10,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: "#ddd8fb",
+      backgroundColor: "#ffffff",
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+    },
+    selectionIconButton: {
+      width: 34,
+      height: 34,
+      borderRadius: 10,
+      backgroundColor: "#efedff",
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    selectionCount: {
+      flex: 1,
+      color: "#171329",
+      fontSize: 12,
+      fontWeight: "900",
+    },
+    selectAllButton: {
+      minHeight: 36,
+      paddingHorizontal: 10,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: "#d8d3fc",
+      backgroundColor: "#f5f3ff",
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    selectAllText: {
+      color: "#4d3fe6",
+      fontSize: 10,
+      fontWeight: "900",
+    },
+    deleteSelectionButton: {
+      minHeight: 36,
+      paddingHorizontal: 11,
+      borderRadius: 10,
+      backgroundColor: "#dc2626",
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 5,
+    },
+    deleteSelectionText: {
+      color: "#ffffff",
+      fontSize: 10,
+      fontWeight: "900",
+    },
+    selectionDisabled: {
+      opacity: 0.45,
+    },
+    searchRow: { flexDirection: "row", gap: 9, paddingHorizontal: 18, marginBottom: 14 },
+    searchBox: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 7, paddingHorizontal: 11, borderWidth: 1, borderColor: "#e7e5f3", borderRadius: 12, backgroundColor: "#ffffff" },
+    searchInput: { flex: 1, minWidth: 0, minHeight: 44, fontSize: 12, color: "#171329", paddingVertical: 10 },
+    dateFilterButton: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, minHeight: 44, borderWidth: 1, borderColor: "#e7e5f3", borderRadius: 12, backgroundColor: "#ffffff" },
+    dateFilterActive: { backgroundColor: "#efedff", borderColor: "#d8d3fc" },
+    activeDateFilter: { alignSelf: "flex-start", maxWidth: "90%", flexDirection: "row", alignItems: "center", gap: 10, marginHorizontal: 18, marginBottom: 12, paddingHorizontal: 12, paddingVertical: 9, backgroundColor: "#efedff", borderRadius: 10 },
+    activeDateText: { flexShrink: 1, color: "#4d3fe6", fontSize: 12, fontWeight: "700" },
+    clearDateAction: { minHeight: 44, alignItems: "center", justifyContent: "center", marginTop: 8 },
+    dateModalOverlay: { flex: 1, justifyContent: "center", alignItems: "center", padding: 22, backgroundColor: "rgba(23,19,41,0.5)" },
+    dateModalCard: { width: "100%", maxWidth: 420, maxHeight: "90%", backgroundColor: "#ffffff", borderRadius: 22, padding: 22 },
+    dateModalHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 22 },
+    dateFieldGroup: { marginBottom: 18 },
+    dateFieldLabel: { color: "#636674", fontSize: 12, fontWeight: "700", marginBottom: 8 },
+    dateFieldRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+    dateField: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, minHeight: 50, paddingHorizontal: 13, borderRadius: 12, borderWidth: 1, borderColor: "#e7e5f3", backgroundColor: "#faf9ff" },
+    dateFieldText: { flexShrink: 1, color: "#171329", fontSize: 13, fontWeight: "600" },
+    datePlaceholder: { color: "#8b8f9c", fontSize: 12 },
+    dateModalActions: { flexDirection: "row", gap: 12, marginTop: 4 },
+    resetDateButton: { flex: 1, minHeight: 46, borderRadius: 12, borderWidth: 1, borderColor: "#e7e5f3", alignItems: "center", justifyContent: "center" },
+    applyDateButton: { flex: 1, minHeight: 46, borderRadius: 12, backgroundColor: "#4d3fe6", alignItems: "center", justifyContent: "center" },
     safeArea: {
       flex: 1,
       backgroundColor:

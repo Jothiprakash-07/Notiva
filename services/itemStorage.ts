@@ -220,7 +220,8 @@ export function deleteItem(
 }
 
 export function toggleComplete(
-  id: string
+  id: string,
+  completionNote?: string
 ) {
   return mutate(
     async () => {
@@ -260,9 +261,20 @@ export function toggleComplete(
         return item;
       }
 
+      /*
+       * Stop all remaining scheduled
+       * notifications when item is Done.
+       */
       await cancelNotifications(
         item.notificationIds
       );
+
+      /*
+       * Completion note is optional.
+       * Empty spaces are treated as no note.
+       */
+      const cleanedNote =
+        completionNote?.trim();
 
       const next: ReminderItem =
         {
@@ -274,6 +286,10 @@ export function toggleComplete(
             true,
 
           status: "Done",
+
+          completionNote:
+            cleanedNote ||
+            undefined,
 
           notificationIds:
             [],
@@ -433,6 +449,14 @@ export function rescheduleItem(
           actionResolved:
             false,
 
+          /*
+           * Rescheduled item becomes
+           * active again, so remove any
+           * previous completion note.
+           */
+          completionNote:
+            undefined,
+
           status: undefined,
 
           notificationIds:
@@ -442,17 +466,12 @@ export function rescheduleItem(
             new Date().toISOString(),
         };
 
-      /*
-       * Remove old scheduled
-       * notification IDs first.
-       */
       await cancelNotifications(
         existing.notificationIds
       );
 
       /*
-       * Keep original item/date
-       * if new notification
+       * Keep original item if
        * scheduling fails.
        */
       await persist(

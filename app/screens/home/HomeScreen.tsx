@@ -1,3 +1,4 @@
+import CompletionNoteModal from "../../../components/common/CompletionNoteModal";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import {
   router,
@@ -324,6 +325,7 @@ export default function HomeScreen() {
    */
   const params =
     useLocalSearchParams<{
+      notificationResponseId?: string | string[];
       notificationItemId?:
         | string
         | string[];
@@ -390,8 +392,11 @@ export default function HomeScreen() {
    * Prevent duplicate processing
    * before route param is cleared.
    */
-  const handlingNotification =
-    useRef(false);
+  const handledNotification = useRef<string | undefined>(undefined);
+  const suppressAutoOpen = useRef(false);
+  const [notificationOpening, setNotificationOpening] = useState(0);
+  const notificationResponseId = Array.isArray(params.notificationResponseId)
+    ? params.notificationResponseId[0] : params.notificationResponseId;
 
   useEffect(() => {
     const timer =
@@ -451,122 +456,41 @@ export default function HomeScreen() {
    * should be shown.
    */
   useEffect(() => {
-    if (
-      !notificationItemId ||
-      handlingNotification.current
-    ) {
-      return;
-    }
-
-    handlingNotification.current =
-      true;
-
-    let active =
-      true;
-
-    const handle =
-      async () => {
-        try {
-          const stored =
-            await getItems();
-
-          if (!active) {
-            return;
-          }
-
-          const calculated =
-            stored.map(
-              (
-                item
-              ) =>
-                withCalculatedStatus(
-                  item
-                )
-            );
-
-          setItems(
-            calculated
-          );
-
-          const tappedItem =
-            calculated.find(
-              (
-                item
-              ) =>
-                item.id ===
-                notificationItemId
-            );
-
-          if (!tappedItem) {
-            return;
-          }
-
-          /*
-           * Missed Reminder /
-           * Overdue Task:
-           *
-           * Open Action Required
-           * and put this item first.
-           */
-          if (
-            isActionRequired(
-              tappedItem
-            )
-          ) {
-            setActionInitialId(
-              tappedItem.id
-            );
-
-            setShowActions(
-              true
-            );
-
-            return;
-          }
-
-          /*
-           * Notification may fire
-           * before startAt because of
-           * alertBefore.
-           *
-           * In that case item is still
-           * Pending, so open details
-           * instead of showing an
-           * invalid Action Required.
-           */
-          router.push(
-            `/screens/details/${tappedItem.id}` as any
-          );
-        } catch (
-          error
-        ) {
-          console.warn(
-            "Could not handle notification item:",
-            error
-          );
-        } finally {
-          /*
-           * Clear route param so focus
-           * changes do not reopen it.
-           */
-          router.setParams({
-            notificationItemId:
-              "",
-          });
-
-          handlingNotification.current =
-            false;
+    if (!notificationItemId) return;
+    const key = notificationResponseId || notificationItemId;
+    if (handledNotification.current === key) return;
+    let active = true;
+    suppressAutoOpen.current = true;
+    const handle = async () => {
+      try {
+        const stored = await getItems();
+        if (!active) return;
+        handledNotification.current = key;
+        const calculated = stored.map(item => withCalculatedStatus(item));
+        setItems(calculated);
+        const tappedItem = calculated.find(item => item.id === notificationItemId);
+        // Clear Home's params before pushing Details. Cleanup must not clear a newer tap.
+        router.setParams({ notificationItemId: undefined, notificationResponseId: undefined });
+        if (!tappedItem) return;
+        if (isActionRequired(tappedItem)) {
+          setActionInitialId(tappedItem.id);
+          setNotificationOpening(value => value + 1);
+          setShowActions(true);
+        } else {
+          setShowActions(false);
+          router.push({ pathname: "/screens/details/[id]", params: { id: tappedItem.id } });
         }
-      };
-
-    void handle();
-
-    return () => {
-      active = false;
+      } catch (error) {
+        if (active) {
+          router.setParams({ notificationItemId: undefined, notificationResponseId: undefined });
+          console.warn("Could not handle notification item:", error);
+          Alert.alert("Could not open item", "Please reopen Home to try again.");
+        }
+      }
     };
-  }, [
-    notificationItemId,
-  ]);
+    void handle();
+    return () => { active = false; };
+  }, [notificationItemId, notificationResponseId]);
 
   useFocusEffect(
     useCallback(() => {
@@ -604,6 +528,7 @@ export default function HomeScreen() {
                */
               if (
                 !notificationItemId &&
+                !suppressAutoOpen.current &&
                 shouldAutoOpenActionRequired(
                   stored
                 )
@@ -806,44 +731,29 @@ export default function HomeScreen() {
       isCountedAsOverdue
     ).length;
 
-  const handleToggle =
-    async (
-      id: string
-    ) => {
-      try {
-        const updated =
-          await toggleComplete(
-            id
-          );
+  const [completionItemId, setCompletionItemId] = useState<string | null>(null);
+  const [completionSaving, setCompletionSaving] = useState(false);
 
-        if (
-          !updated?.completed
-        ) {
-          throw new Error(
-            "Item could not be completed."
-          );
-        }
+  const handleToggle = (id: string) => {
+    const selected = items.find(item => item.id === id);
+    if (selected && !selected.completed && selected.status !== "Done") setCompletionItemId(id);
+  };
 
-        const stored =
-          await getItems();
-
-        setItems(
-          stored.map(
-            (
-              item
-            ) =>
-              withCalculatedStatus(
-                item
-              )
-          )
-        );
-      } catch {
-        Alert.alert(
-          "Could not complete item",
-          "Please try again."
-        );
-      }
-    };
+  const confirmCompletion = async (note?: string) => {
+    if (!completionItemId || completionSaving) return;
+    setCompletionSaving(true);
+    try {
+      const updated = await toggleComplete(completionItemId, note);
+      if (!updated?.completed) throw new Error("Item could not be completed.");
+      const stored = await getItems();
+      setItems(stored.map(item => withCalculatedStatus(item)));
+      setCompletionItemId(null);
+    } catch (error) {
+      Alert.alert("Could not complete item", error instanceof Error ? error.message : "Please try again.");
+    } finally {
+      setCompletionSaving(false);
+    }
+  };
 
   return (
     <SafeAreaView
@@ -1458,6 +1368,7 @@ export default function HomeScreen() {
       {/* Action Required Stack */}
       {showActions ? (
         <ActionRequiredStack
+          key={notificationOpening}
           items={items}
           initialId={
             actionInitialId
@@ -1498,6 +1409,13 @@ export default function HomeScreen() {
             `/screens/create/${type}` as any
           );
         }}
+      />
+      <CompletionNoteModal
+        visible={completionItemId !== null}
+        itemTitle={items.find(item => item.id === completionItemId)?.title}
+        saving={completionSaving}
+        onClose={() => { if (!completionSaving) setCompletionItemId(null); }}
+        onConfirm={confirmCompletion}
       />
     </SafeAreaView>
   );

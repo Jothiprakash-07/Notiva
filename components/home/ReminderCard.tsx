@@ -1,4 +1,3 @@
-import { priorityColors, statusColors } from "../../constants/itemColors";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import {
   Pressable,
@@ -6,6 +5,16 @@ import {
   Text,
   View,
 } from "react-native";
+
+import {
+  useRef,
+} from "react";
+
+import {
+  priorityColors,
+  statusColors,
+} from "../../constants/itemColors";
+
 import {
   ItemStatus,
   ItemType,
@@ -21,8 +30,20 @@ type ReminderCardProps = {
   category: string;
   status: ItemStatus;
   type: ItemType;
+
   onPress: () => void;
+
   onToggle?: () => void;
+
+  selectionMode?: boolean;
+
+  selected?: boolean;
+
+  onLongPress?: () => void;
+
+  onSelect?: () => void;
+
+  disabled?: boolean;
 };
 
 function typeIcon(
@@ -43,7 +64,9 @@ function typeIcon(
   return "gift-outline";
 }
 
-function typeLabel(type: ItemType) {
+function typeLabel(
+  type: ItemType
+) {
   return (
     type[0].toUpperCase() +
     type.slice(1)
@@ -60,30 +83,123 @@ export default function ReminderCard({
   type,
   onPress,
   onToggle,
+  selectionMode = false,
+  selected = false,
+  onLongPress,
+  onSelect,
+  disabled = false,
 }: ReminderCardProps) {
   const colors =
     statusColors[status];
 
-  const canToggle =
-    (type === "reminder" ||
-      type === "task") &&
-    (status === "Pending" ||
-      status === "Done");
+  const longPressedRef =
+    useRef(false);
 
   const isDone =
     status === "Done";
 
+  const canToggle =
+    (
+      type === "reminder" ||
+      type === "task"
+    ) &&
+    [
+      "Pending",
+      "Missed",
+      "Overdue",
+      "Done",
+    ].includes(status);
+
+  /*
+   * Full-card long press.
+   *
+   * This prevents the normal card press
+   * from opening Details immediately
+   * after a long press.
+   */
+  const handleLongPress = () => {
+    if (
+      disabled ||
+      selectionMode ||
+      !onLongPress
+    ) {
+      return;
+    }
+
+    longPressedRef.current =
+      true;
+
+    onLongPress();
+  };
+
+  /*
+   * Normal press:
+   *
+   * Selection mode -> select/unselect
+   * Normal mode    -> open Details
+   */
+  const handleCardPress = () => {
+    if (disabled) {
+      return;
+    }
+
+    if (
+      longPressedRef.current
+    ) {
+      longPressedRef.current =
+        false;
+
+      return;
+    }
+
+    if (selectionMode) {
+      onSelect?.();
+
+      return;
+    }
+
+    onPress();
+  };
+
   return (
     <Pressable
-      accessibilityRole="button"
-      style={({ pressed }) => [
+      accessibilityRole={
+        selectionMode
+          ? "checkbox"
+          : "button"
+      }
+      accessibilityState={{
+        disabled,
+
+        ...(selectionMode
+          ? {
+              checked:
+                selected,
+            }
+          : {}),
+      }}
+      disabled={disabled}
+      delayLongPress={300}
+      onLongPress={
+        handleLongPress
+      }
+      onPress={
+        handleCardPress
+      }
+      style={({
+        pressed,
+      }) => [
         styles.card,
+
+        selectionMode &&
+          selected &&
+          styles.selectedCard,
+
         pressed &&
           styles.cardPressed,
       ]}
-      onPress={onPress}
     >
-      {/* Status indicator */}
+      {/* Status line */}
       <View
         style={[
           styles.leftLine,
@@ -94,39 +210,103 @@ export default function ReminderCard({
         ]}
       />
 
-      <View style={styles.content}>
+      <View
+        style={
+          styles.content
+        }
+      >
         {/* Top row */}
-        <View style={styles.topRow}>
-          <View style={styles.titleArea}>
-            {canToggle ? (
+        <View
+          style={
+            styles.topRow
+          }
+        >
+          <View
+            style={
+              styles.titleArea
+            }
+          >
+            {selectionMode ? (
+              /*
+               * Selection icon.
+               * pointerEvents none means
+               * the full card receives
+               * press/long-press gestures.
+               */
+              <View
+                style={
+                  styles.checkbox
+                }
+                pointerEvents="none"
+              >
+                <Ionicons
+                  name={
+                    selected
+                      ? "checkbox"
+                      : "square-outline"
+                  }
+                  size={23}
+                  color="#4d3fe6"
+                />
+              </View>
+            ) : canToggle ? (
               <Pressable
-                accessibilityRole="checkbox"
+                accessibilityRole="button"
                 accessibilityLabel={
                   isDone
                     ? "Completed"
-                    : "Mark done"
+                    : "Mark as done"
                 }
                 accessibilityState={{
-                  checked:
-                    isDone,
                   disabled:
                     isDone,
                 }}
                 disabled={
-                  isDone
+                  isDone ||
+                  disabled
                 }
                 hitSlop={8}
+                delayLongPress={
+                  300
+                }
                 style={
                   styles.checkbox
                 }
+
+                /*
+                 * Important:
+                 * Long pressing the Done area
+                 * should ALSO enter selection.
+                 */
+                onLongPress={(
+                  event
+                ) => {
+                  event.stopPropagation();
+
+                  handleLongPress();
+                }}
+
                 onPress={(
                   event
                 ) => {
                   event.stopPropagation();
 
+                  /*
+                   * If this was a long press,
+                   * do not trigger Done.
+                   */
                   if (
-                    status ===
-                    "Pending"
+                    longPressedRef.current
+                  ) {
+                    longPressedRef.current =
+                      false;
+
+                    return;
+                  }
+
+                  if (
+                    !isDone &&
+                    !selectionMode
                   ) {
                     onToggle?.();
                   }
@@ -151,6 +331,7 @@ export default function ReminderCard({
                 style={
                   styles.typeIconSmall
                 }
+                pointerEvents="none"
               >
                 <Ionicons
                   name={typeIcon(
@@ -186,6 +367,7 @@ export default function ReminderCard({
                   colors.backgroundColor,
               },
             ]}
+            pointerEvents="none"
           >
             <Text
               allowFontScaling={
@@ -207,10 +389,15 @@ export default function ReminderCard({
 
         {/* Time + Date */}
         <View
-          style={styles.metaRow}
+          style={
+            styles.metaRow
+          }
+          pointerEvents="none"
         >
           <View
-            style={styles.metaItem}
+            style={
+              styles.metaItem
+            }
           >
             <Ionicons
               name="time-outline"
@@ -238,7 +425,9 @@ export default function ReminderCard({
           />
 
           <View
-            style={styles.metaItem}
+            style={
+              styles.metaItem
+            }
           >
             <Ionicons
               name="calendar-outline"
@@ -262,7 +451,10 @@ export default function ReminderCard({
 
         {/* Bottom tags */}
         <View
-          style={styles.tagsRow}
+          style={
+            styles.tagsRow
+          }
+          pointerEvents="none"
         >
           <View
             style={
@@ -270,7 +462,9 @@ export default function ReminderCard({
             }
           >
             <Ionicons
-              name={typeIcon(type)}
+              name={typeIcon(
+                type
+              )}
               size={12}
               color="#4d3fe6"
             />
@@ -302,7 +496,9 @@ export default function ReminderCard({
               }
               numberOfLines={1}
             >
-              {typeLabel(type)}
+              {typeLabel(
+                type
+              )}
             </Text>
           </View>
 
@@ -313,6 +509,7 @@ export default function ReminderCard({
               }
               style={[
                 styles.priorityBadge,
+
                 priorityColors[
                   priority
                 ],
@@ -324,15 +521,34 @@ export default function ReminderCard({
         </View>
       </View>
 
-      {/* Open details indicator */}
+      {/* Right indicator */}
       <View
-        style={styles.chevronArea}
+        style={
+          styles.chevronArea
+        }
+        pointerEvents="none"
       >
-        <Ionicons
-          name="chevron-forward"
-          size={17}
-          color="#c4c7cf"
-        />
+        {selectionMode ? (
+          <Ionicons
+            name={
+              selected
+                ? "checkmark-circle"
+                : "ellipse-outline"
+            }
+            size={20}
+            color={
+              selected
+                ? "#4d3fe6"
+                : "#c4c7cf"
+            }
+          />
+        ) : (
+          <Ionicons
+            name="chevron-forward"
+            size={17}
+            color="#c4c7cf"
+          />
+        )}
       </View>
     </Pressable>
   );
@@ -340,8 +556,19 @@ export default function ReminderCard({
 
 const styles =
   StyleSheet.create({
+    selectedCard: {
+      borderColor:
+        "#4d3fe6",
+
+      borderWidth: 1.5,
+
+      backgroundColor:
+        "#f5f3ff",
+    },
+
     card: {
       width: "100%",
+
       minHeight: 116,
 
       backgroundColor:
@@ -349,18 +576,26 @@ const styles =
 
       borderRadius: 16,
 
-      flexDirection: "row",
-      alignItems: "stretch",
+      flexDirection:
+        "row",
 
-      overflow: "hidden",
+      alignItems:
+        "stretch",
+
+      overflow:
+        "hidden",
 
       borderWidth: 1,
+
       borderColor:
         "#efedf7",
 
       shadowColor:
         "#171329",
-      shadowOpacity: 0.055,
+
+      shadowOpacity:
+        0.055,
+
       shadowRadius: 8,
 
       shadowOffset: {
@@ -373,6 +608,7 @@ const styles =
 
     cardPressed: {
       opacity: 0.88,
+
       transform: [
         {
           scale: 0.995,
@@ -386,37 +622,53 @@ const styles =
 
     content: {
       flex: 1,
+
       paddingLeft: 14,
+
       paddingRight: 8,
+
       paddingTop: 15,
+
       paddingBottom: 14,
+
       minWidth: 0,
     },
 
     topRow: {
-      flexDirection: "row",
+      flexDirection:
+        "row",
+
       alignItems:
         "flex-start",
+
       justifyContent:
         "space-between",
+
       gap: 10,
     },
 
     titleArea: {
       flex: 1,
+
       minWidth: 0,
 
-      flexDirection: "row",
+      flexDirection:
+        "row",
+
       alignItems:
         "flex-start",
+
       gap: 8,
     },
 
     checkbox: {
       width: 25,
+
       minHeight: 25,
 
-      alignItems: "center",
+      alignItems:
+        "center",
+
       justifyContent:
         "center",
 
@@ -425,11 +677,14 @@ const styles =
 
     typeIconSmall: {
       width: 25,
+
       height: 25,
 
       borderRadius: 8,
 
-      alignItems: "center",
+      alignItems:
+        "center",
+
       justifyContent:
         "center",
 
@@ -439,24 +694,31 @@ const styles =
 
     title: {
       flex: 1,
+
       minWidth: 0,
 
-      color: "#171329",
+      color:
+        "#171329",
 
       fontSize: 15,
+
       lineHeight: 20,
 
-      fontWeight: "900",
+      fontWeight:
+        "900",
     },
 
     doneTitle: {
-      color: "#6b7280",
+      color:
+        "#6b7280",
+
       textDecorationLine:
         "line-through",
     },
 
     statusBadge: {
       minWidth: 62,
+
       maxWidth: 82,
 
       minHeight: 25,
@@ -465,9 +727,12 @@ const styles =
 
       justifyContent:
         "center",
-      alignItems: "center",
+
+      alignItems:
+        "center",
 
       paddingHorizontal: 9,
+
       paddingVertical: 4,
 
       flexShrink: 0,
@@ -475,16 +740,22 @@ const styles =
 
     statusText: {
       fontSize: 10,
+
       lineHeight: 13,
 
-      fontWeight: "900",
+      fontWeight:
+        "900",
     },
 
     metaRow: {
-      flexDirection: "row",
-      alignItems: "center",
+      flexDirection:
+        "row",
 
-      flexWrap: "wrap",
+      alignItems:
+        "center",
+
+      flexWrap:
+        "wrap",
 
       marginTop: 10,
 
@@ -492,14 +763,18 @@ const styles =
     },
 
     metaItem: {
-      flexDirection: "row",
-      alignItems: "center",
+      flexDirection:
+        "row",
+
+      alignItems:
+        "center",
 
       gap: 4,
     },
 
     metaDivider: {
       width: 3,
+
       height: 3,
 
       borderRadius: 2,
@@ -509,19 +784,26 @@ const styles =
     },
 
     metaText: {
-      color: "#7c818d",
+      color:
+        "#7c818d",
 
       fontSize: 11,
+
       lineHeight: 15,
 
-      fontWeight: "600",
+      fontWeight:
+        "600",
     },
 
     tagsRow: {
-      flexDirection: "row",
-      alignItems: "center",
+      flexDirection:
+        "row",
 
-      flexWrap: "wrap",
+      alignItems:
+        "center",
+
+      flexWrap:
+        "wrap",
 
       marginTop: 11,
 
@@ -538,24 +820,31 @@ const styles =
       backgroundColor:
         "#efedff",
 
-      flexDirection: "row",
-      alignItems: "center",
+      flexDirection:
+        "row",
+
+      alignItems:
+        "center",
 
       gap: 5,
 
       paddingHorizontal: 8,
+
       paddingVertical: 4,
     },
 
     categoryText: {
       flexShrink: 1,
 
-      color: "#4d3fe6",
+      color:
+        "#4d3fe6",
 
       fontSize: 10,
+
       lineHeight: 13,
 
-      fontWeight: "800",
+      fontWeight:
+        "800",
     },
 
     typeBadge: {
@@ -570,16 +859,20 @@ const styles =
         "center",
 
       paddingHorizontal: 8,
+
       paddingVertical: 4,
     },
 
     typeText: {
-      color: "#6b7280",
+      color:
+        "#6b7280",
 
       fontSize: 10,
+
       lineHeight: 13,
 
-      fontWeight: "800",
+      fontWeight:
+        "800",
     },
 
     priorityBadge: {
@@ -587,24 +880,30 @@ const styles =
 
       borderRadius: 12,
 
-      overflow: "hidden",
+      overflow:
+        "hidden",
 
       paddingHorizontal: 8,
+
       paddingVertical: 5,
 
       fontSize: 10,
+
       lineHeight: 13,
 
-      fontWeight: "900",
+      fontWeight:
+        "900",
     },
 
     chevronArea: {
-      width: 28,
+      width: 34,
 
-      alignItems: "center",
+      alignItems:
+        "center",
+
       justifyContent:
         "center",
 
-      paddingRight: 6,
+      paddingRight: 7,
     },
   });

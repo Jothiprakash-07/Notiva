@@ -20,6 +20,8 @@ const wrapper = (tag) => function NativeTestView({ children, onPress, disabled, 
   'data-accessibility': importantForAccessibility, 'data-pointer-events': pointerEvents,
 }, children); };
 const native = {
+  Platform: { OS: 'android' }, KeyboardAvoidingView: wrapper('div'),
+  TextInput: ({ value, onChangeText, maxLength, editable, accessibilityLabel }) => React.createElement('textarea', { value, maxLength, disabled: !editable, 'aria-label': accessibilityLabel, onInput: event => onChangeText(event.target.value), onChange: () => {} }),
   View: wrapper('div'), Text: wrapper('span'), Pressable: wrapper('button'), ScrollView: wrapper('section'),
   Modal: ({ visible, children }) => visible ? React.createElement('article', null, children) : null,
   StyleSheet: { create: (value) => value, absoluteFillObject: {} },
@@ -41,7 +43,7 @@ async function update(id, action) {
   items = action === 'delete' ? items.filter((item) => item.id !== id) : items.map((item) => item.id === id ? { ...item, actionResolved: true, completed: action === 'done' } : item);
   return items.find((item) => item.id === id);
 }
-const storage = { toggleComplete: (id) => update(id, 'done'), resolveItemAction: (id) => update(id, 'skip'), deleteItem: (id) => update(id, 'delete') };
+const storage = { toggleComplete: (id, note) => { storage.lastNote = note; return update(id, 'done'); }, resolveItemAction: (id) => update(id, 'skip'), deleteItem: (id) => update(id, 'delete') };
 const cache = new Map();
 function load(file) {
   const full = path.resolve(__dirname, '..', file);
@@ -69,7 +71,8 @@ function load(file) {
     if (id === '@react-navigation/native') return { useIsFocused: () => focused };
     if (id === 'expo-router') return { router: { push: (route) => calls.push(route) } };
     if (id.endsWith('services/itemStorage')) return storage;
-    return load(path.relative(path.resolve(__dirname, '..'), path.resolve(path.dirname(full), id + '.ts')));
+    const base = path.resolve(path.dirname(full), id);
+    return load(path.relative(path.resolve(__dirname, '..'), base + (fs.existsSync(base + '.tsx') ? '.tsx' : '.ts')));
   } }, { filename: full });
   return module.exports;
 }
@@ -100,12 +103,13 @@ async function setup(count) {
   await click('Action'); await click('Cancel');
   assert.ok(document.querySelector('article')); assert.equal(calls.length, 0);
   await click('Action'); await click('Mark as Done');
-  assert.equal(alerts.at(-1)[0], 'Mark as Done?');
+  assert.ok(document.querySelector('textarea'), 'Done opens the common note modal');
   assert.equal(calls.length, 0); assert.equal(animations.length, 0);
-  // Cancelling the native confirmation has no handler and cannot mutate the deck.
-  assert.equal(alerts.at(-1)[2][0].onPress, undefined);
+  await click('Cancel');
+  assert.equal(document.querySelector('textarea'), null); assert.equal(calls.length, 0);
+  await click('Action'); await click('Mark as Done');
   release = true;
-  await act(async () => alerts.at(-1)[2][1].onPress());
+  await click('Done');
   assert.equal(animations.length, 0, 'No animation before persistence finishes');
   const unblock = release; release = undefined;
   await act(async () => unblock());
@@ -202,6 +206,46 @@ async function setup(count) {
   assert.ok(!document.body.textContent.includes('Item 0'), 'Saved cards never reappear if list refresh fails');
   assert.ok(!document.body.textContent.includes('Item 1'));
   assert.ok(document.body.textContent.includes('1 pending'));
+  failRefresh = false;
+  await setup(2);
+  await click('Action'); await click('Mark as Done');
+  fail = true; await click('Done');
+  assert.ok(document.querySelector('textarea'), 'Failed Done keeps modal open');
+  assert.equal(animations.length, 0);
+  fail = false; await click('Skip Note');
+  assert.equal(storage.lastNote, undefined); await finish();
+
+  const CompletionModal = load('components/common/CompletionNoteModal.tsx').default;
+  let visible = true, noteCalls = [], closeCalls = 0, modalFail = false, pending;
+  const modalRender = () => root.render(React.createElement(CompletionModal, { visible, itemTitle: 'Example',
+    onClose: () => { closeCalls++; visible = false; modalRender(); },
+    onConfirm: async note => { noteCalls.push(note); if (modalFail) throw new Error('Save failed'); if (pending) await new Promise(resolve => { pending = resolve; }); },
+  }));
+  const typeNote = async text => { await act(async () => {
+    const input = document.querySelector('textarea'); input.value = text;
+    input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  }); };
+  await act(async () => modalRender());
+  assert.equal(document.querySelector('textarea').maxLength, 300);
+  await typeNote('  Finished the work  '); await click('Done');
+  assert.equal(noteCalls.at(-1), 'Finished the work');
+  await typeNote('   '); await click('Done'); assert.equal(noteCalls.at(-1), undefined);
+  await typeNote('Discard this'); await click('Skip Note'); assert.equal(noteCalls.at(-1), undefined);
+  const beforeCancel = noteCalls.length; await click('Cancel');
+  assert.equal(closeCalls, 1); assert.equal(noteCalls.length, beforeCancel);
+  visible = true; await act(async () => modalRender());
+  assert.equal(document.querySelector('textarea').value, '', 'Reopening resets note');
+  await typeNote('Retry note'); modalFail = true; await click('Done');
+  assert.equal(document.querySelector('textarea').value, 'Retry note', 'Failure preserves note');
+  modalFail = false; pending = true;
+  const beforeDouble = noteCalls.length;
+  const doneButton = [...document.querySelectorAll('button')].find(node => node.textContent === 'Done');
+  await act(async () => { doneButton.click(); doneButton.click(); });
+  assert.equal(noteCalls.length, beforeDouble + 1, 'Immediate double tap saves once');
+  assert.equal(document.querySelector('textarea').disabled, true);
+  await click('Cancel'); assert.equal(closeCalls, 1, 'Cancel blocked during save');
+  const resolve = pending; pending = undefined; await act(async () => resolve());
   await act(async () => root.unmount());
+  console.log('PASS: shared completion modal trim/empty/Skip Note/Cancel/reset, 300-character limit, failed-save retry, double-tap lock, and Action Required completion failure/success.');
   console.log('PASS: session-only auto-open, 1/2/3/5-card stacks, back-card isolation, Action menu/cancel, confirmation cancellation, Done/Skip/Delete, close/reopen, reschedule, temporary swipes in both directions, zero swipe storage calls, reopen after dismiss-all, 35% threshold, snap-back, and real-action persistence-before-exit.');
 })().catch((error) => { console.error(error); process.exitCode = 1; });

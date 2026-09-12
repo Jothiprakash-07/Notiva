@@ -1,10 +1,10 @@
 import { Tabs } from "expo-router";
 import {
   Image,
-  Platform,
   StyleSheet,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const homeIcon = require("../../assets/icon/Nav/home.png");
 const fileIcon = require("../../assets/icon/Nav/file-text.png");
@@ -16,6 +16,11 @@ const ACTIVE_COLOR = "#4d3fe6";
 const INACTIVE_COLOR = "#8b8f9c";
 
 export default function TabLayout() {
+  const insets = useSafeAreaInsets();
+  // Reserve the system area once, with a small baseline on inset-free phones.
+  // Keep the icon/label area constant even when Android reports a larger inset.
+  const bottomPadding = Math.max(insets.bottom, 6);
+
   return (
     <Tabs
       screenOptions={{
@@ -28,19 +33,14 @@ export default function TabLayout() {
           INACTIVE_COLOR,
 
         tabBarHideOnKeyboard: true,
+        tabBarLabelPosition: "below-icon",
 
         tabBarStyle: {
-          height:
-            Platform.OS === "ios"
-              ? 84
-              : 70,
+          height: 54 + bottomPadding,
 
-          paddingTop: 8,
+          paddingTop: 6,
 
-          paddingBottom:
-            Platform.OS === "ios"
-              ? 20
-              : 8,
+          paddingBottom: bottomPadding,
 
           backgroundColor:
             "#ffffff",
@@ -67,12 +67,18 @@ export default function TabLayout() {
 
         tabBarLabelStyle: {
           fontSize: 10,
+          lineHeight: 12,
           fontWeight: "700",
-          marginTop: 3,
+          marginTop: 2,
+        },
+
+        tabBarIconStyle: {
+          width: 34,
+          height: 30,
         },
 
         tabBarItemStyle: {
-          paddingVertical: 2,
+          paddingVertical: 0,
         },
       }}
     >

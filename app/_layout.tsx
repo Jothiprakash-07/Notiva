@@ -12,11 +12,13 @@ import * as Notifications from "expo-notifications";
 import {
   router,
   Stack,
+  useRootNavigationState,
 } from "expo-router";
 
 import {
   useEffect,
   useRef,
+  useState,
 } from "react";
 
 import { StatusBar } from "expo-status-bar";
@@ -24,168 +26,49 @@ import { StatusBar } from "expo-status-bar";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 
-import {
-  cancelNotifications,
-} from "../services/notificationService";
-
-import {
-  getItemById,
-} from "../services/itemStorage";
+import { consumeNotificationResponse, notificationResponseKey } from "../services/notificationResponse";
 
 export default function RootLayout() {
   const colorScheme =
     useColorScheme();
 
-  const handledResponseId =
-    useRef<string | null>(
-      null
-    );
+  const navigation = useRootNavigationState();
+  const [pending, setPending] = useState<{ itemId: string; responseKey: string }>();
+  const responseSequence = useRef(0);
+  const received = useRef(new Set<string>());
 
   useEffect(() => {
-    const handleNotificationResponse =
-      async (
-        response: Notifications.NotificationResponse
-      ) => {
-        try {
-          const notification =
-            response.notification;
-
-          const requestId =
-            notification.request.identifier;
-
-          /*
-           * Avoid handling the same
-           * notification response twice.
-           */
-          if (
-            handledResponseId.current ===
-            requestId
-          ) {
-            return;
-          }
-
-          handledResponseId.current =
-            requestId;
-
-          const data =
-            notification.request.content
-              .data;
-
-          const itemId =
-            typeof data?.itemId ===
-            "string"
-              ? data.itemId
-              : undefined;
-
-          if (!itemId) {
-            router.replace(
-              "/(tabs)"
-            );
-
-            return;
-          }
-
-          /*
-           * Find the reminder/task
-           * from local storage.
-           */
-          const item =
-            await getItemById(
-              itemId
-            );
-
-          /*
-           * Cancel remaining repeated
-           * notifications for this item.
-           *
-           * Example:
-           * Alert 1 tapped
-           * → Alert 2 + Alert 3 cancel.
-           */
-          if (
-            item?.notificationIds
-              ?.length
-          ) {
-            await cancelNotifications(
-              item.notificationIds
-            );
-          }
-
-          /*
-           * Open the app.
-           *
-           * Home can later use itemId
-           * to open Action Required stack.
-           */
-          router.replace({
-            pathname:
-              "/(tabs)",
-
-            params: {
-              notificationItemId:
-                itemId,
-            },
-          });
-        } catch (error) {
-          console.warn(
-            "Notification response handling failed:",
-            error
-          );
-
-          router.replace(
-            "/(tabs)"
-          );
-        }
-      };
-
-    /*
-     * Handles notification taps
-     * while app is running/background.
-     */
-    const subscription =
-      Notifications.addNotificationResponseReceivedListener(
-        (
-          response
-        ) => {
-          void handleNotificationResponse(
-            response
-          );
-        }
-      );
-
-    /*
-     * Handles app launch from
-     * a notification tap.
-     */
-    Notifications.getLastNotificationResponseAsync()
-      .then(
-        (
-          response
-        ) => {
-          if (
-            response
-          ) {
-            void handleNotificationResponse(
-              response
-            );
-          }
-        }
-      )
-      .catch(
-        (
-          error
-        ) => {
-          console.warn(
-            "Could not read last notification response:",
-            error
-          );
-        }
-      );
-
-    return () => {
-      subscription.remove();
+    const handle = async (response: Notifications.NotificationResponse) => {
+      const itemId = response.notification.request.content.data?.itemId;
+      if (typeof itemId !== "string" || !itemId.trim()) return;
+      const key = notificationResponseKey(response);
+      if (received.current.has(key)) return;
+      received.current.add(key);
+      const sequence = ++responseSequence.current;
+      const target = await consumeNotificationResponse(response);
+      if (target && sequence === responseSequence.current) setPending(target);
     };
+    const subscription = Notifications.addNotificationResponseReceivedListener(response => {
+      void handle(response);
+    });
+    const initialSequence = responseSequence.current;
+    void Notifications.getLastNotificationResponseAsync().then(response => {
+      if (response && responseSequence.current === initialSequence) void handle(response);
+    }).catch(error => console.warn("Could not read last notification response:", error));
+    return () => subscription.remove();
   }, []);
+
+  useEffect(() => {
+    if (!navigation?.key || !pending) return;
+    router.replace({
+      pathname: "/(tabs)",
+      params: {
+        notificationItemId: pending.itemId,
+        notificationResponseId: pending.responseKey,
+      },
+    });
+    setPending(undefined);
+  }, [navigation?.key, pending]);
 
   return (
     <AuthProvider>

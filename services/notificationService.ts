@@ -36,10 +36,20 @@ export type NotificationSettings = {
 
 export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings =
   {
-    repeatCount: 3,
+    repeatCount: 1,
     repeatIntervalSeconds: 5,
     vibration: true,
   };
+
+function normalizeSettings(value: Partial<NotificationSettings> | null): NotificationSettings {
+  return {
+    repeatCount: [1, 3, 5].includes(value?.repeatCount as number)
+      ? value!.repeatCount! : 1,
+    repeatIntervalSeconds: [3, 5, 10].includes(value?.repeatIntervalSeconds as number)
+      ? value!.repeatIntervalSeconds! : 5,
+    vibration: typeof value?.vibration === "boolean" ? value.vibration : true,
+  };
+}
 
 export const NOTIFICATION_REPEAT_OPTIONS = [
   {
@@ -85,6 +95,34 @@ Notifications.setNotificationHandler({
 });
 
 let requestedThisSession = false;
+let explainedExactAlarmAccess = false;
+
+// SDK 54 exposes no JS canScheduleExactAlarms API. A queued ID does not
+// establish exact access: Expo falls back to an inexact native alarm.
+export async function openExactAlarmSettings(): Promise<void> {
+  if (Platform.OS !== "android") return;
+  try {
+    await Linking.sendIntent("android.settings.REQUEST_SCHEDULE_EXACT_ALARM");
+  } catch {
+    await Linking.openSettings().catch(() => {
+      Alert.alert("Alarms & reminders", "Open Settings → Apps → Special app access → Alarms & reminders → Notiva (Reminder54) and allow access.");
+    });
+  }
+}
+
+async function verifyScheduledNotifications(ids: string[]): Promise<void> {
+  if (!__DEV__) return;
+  // Diagnostics must not cancel valid OS alarms if inspection itself fails.
+  try {
+    const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+    const missingIds = ids.filter(id => !scheduled.some(request => request.identifier === id));
+    debug({ currentTime: new Date().toISOString(), scheduledCount: scheduled.length,
+      notificationIds: ids, missingIds, scheduledNotifications: scheduled });
+    if (missingIds.length) console.warn("[Notification] Scheduled IDs absent from OS queue:", missingIds);
+  } catch (error) {
+    console.warn("[Notification] Could not verify OS queue:", error);
+  }
+}
 
 /* ---------------------------------
  * Helpers
@@ -147,10 +185,7 @@ export async function getNotificationSettings(): Promise<NotificationSettings> {
         return DEFAULT_NOTIFICATION_SETTINGS;
       }
 
-      return {
-        ...DEFAULT_NOTIFICATION_SETTINGS,
-        ...JSON.parse(raw),
-      };
+      return normalizeSettings(JSON.parse(raw));
     }
 
     const {
@@ -177,10 +212,7 @@ export async function getNotificationSettings(): Promise<NotificationSettings> {
       return DEFAULT_NOTIFICATION_SETTINGS;
     }
 
-    return {
-      ...DEFAULT_NOTIFICATION_SETTINGS,
-      ...JSON.parse(raw),
-    };
+    return normalizeSettings(JSON.parse(raw));
   } catch (error) {
     console.warn(
       "Could not read notification settings:",
@@ -194,17 +226,7 @@ export async function getNotificationSettings(): Promise<NotificationSettings> {
 export async function saveNotificationSettings(
   settings: NotificationSettings
 ): Promise<void> {
-  const safeSettings: NotificationSettings =
-    {
-      repeatCount:
-        settings.repeatCount,
-
-      repeatIntervalSeconds:
-        settings.repeatIntervalSeconds,
-
-      vibration:
-        settings.vibration,
-    };
+  const safeSettings = normalizeSettings(settings);
 
   const raw =
     JSON.stringify(
@@ -269,6 +291,13 @@ async function ensureAndroidChannel(
   ) {
     return;
   }
+
+  // Android channel sound/vibration are immutable after creation. Preserve the
+  // user's system choices; saved vibration seeds a NEW channel only. Later UI
+  // must direct users to system settings for an existing channel.
+  const existing = await Notifications.getNotificationChannelAsync(ANDROID_CHANNEL_ID);
+  debug({ channel: existing });
+  if (existing) return;
 
   await Notifications.setNotificationChannelAsync(
     ANDROID_CHANNEL_ID,
@@ -390,12 +419,11 @@ export async function prepareNotifications(): Promise<boolean> {
           ANDROID_CHANNEL_ID
         );
 
+      debug({ channel: configured });
+
       if (
         configured &&
-        configured.importance <
-          Notifications
-            .AndroidImportance
-            .HIGH
+        (configured.importance < Notifications.AndroidImportance.HIGH || configured.sound === null)
       ) {
         Alert.alert(
           "Reminder alerts limited",
@@ -404,6 +432,13 @@ export async function prepareNotifications(): Promise<boolean> {
       }
     }
 
+    if (Platform.OS === "android" && Number(Platform.Version) >= 31 && !explainedExactAlarmAccess) {
+      explainedExactAlarmAccess = true;
+      Alert.alert("Allow precise reminder timing",
+        "Check Settings → Apps → Special app access → Alarms & reminders → Notiva (Reminder54). Allow access, then return here. Without it Android may delay reminders even when scheduling succeeds. Power management can still affect delivery.",
+        [{ text: "Continue", style: "cancel" },
+          { text: "Open settings", onPress: () => { void openExactAlarmSettings(); } }]);
+    }
     return true;
   } catch (error) {
     console.warn(
@@ -474,6 +509,9 @@ export async function cancelNotifications(
 export function notificationDateFor(
   item: ReminderItem
 ): Date {
+  if (!Number.isFinite(item.alertBefore?.minutes) || item.alertBefore.minutes < 0) {
+    return new Date(NaN);
+  }
   return new Date(
     new Date(
       item.startAt
@@ -509,6 +547,15 @@ export function createRecurringTriggers(
   const types =
     Notifications
       .SchedulableTriggerInputTypes;
+
+  const start = new Date(item.startAt);
+  // A fixed day/month trigger cannot express "N minutes before" across
+  // variable-length month boundaries. Refuse instead of silently alerting on
+  // the wrong day in later months/years. Use an at-time alert in this case.
+  if ((item.repeat === "monthly" || item.repeat === "yearly") &&
+      (start.getMonth() !== date.getMonth() || start.getFullYear() !== date.getFullYear())) {
+    throw new Error("This recurring alert crosses a month boundary. Choose an at-time alert or a one-time item.");
+  }
 
   const time = {
     hour:
@@ -689,9 +736,9 @@ function createContent(
 
 async function scheduleOneTimeBurst(
   item: ReminderItem,
-  settings: NotificationSettings
+  settings: NotificationSettings,
+  ids: string[]
 ): Promise<string[]> {
-  const ids: string[] = [];
 
   const firstDate =
     notificationDateFor(
@@ -732,6 +779,7 @@ async function scheduleOneTimeBurst(
             1000
       );
 
+    if (alertDate.getTime() <= Date.now()) throw new Error("Choose a future notification time.");
     const id =
       await Notifications.scheduleNotificationAsync(
         {
@@ -782,6 +830,7 @@ async function scheduleOneTimeBurst(
     });
   }
 
+  await verifyScheduledNotifications(ids);
   return ids;
 }
 
@@ -828,6 +877,8 @@ export async function scheduleItemNotifications(
       );
 
     debug({
+      currentTime: new Date().toISOString(),
+      alertBeforeMinutes: item.alertBefore?.minutes,
       title:
         item.title,
 
@@ -859,7 +910,8 @@ export async function scheduleItemNotifications(
     ) {
       return await scheduleOneTimeBurst(
         item,
-        settings
+        settings,
+        ids
       );
     }
 
@@ -898,6 +950,12 @@ export async function scheduleItemNotifications(
       const trigger of
         triggers
     ) {
+      // Native calendar triggers have no start-date fence. Do not schedule a
+      // recurrence before the selected item's first alert date.
+      const nextDate = await Notifications.getNextTriggerDateAsync(trigger);
+      if (nextDate === null || nextDate < scheduledFor.getTime() - 59_999) {
+        throw new Error("This recurring alert cannot start on the selected date. Choose a one-time item or set up the recurrence closer to its start.");
+      }
       const id =
         await Notifications.scheduleNotificationAsync(
           {
@@ -923,6 +981,7 @@ export async function scheduleItemNotifications(
       });
     }
 
+    await verifyScheduledNotifications(ids);
     return ids;
   } catch (error) {
     await cancelNotifications(
@@ -946,7 +1005,7 @@ export async function scheduleItemNotifications(
 
     Alert.alert(
       "Reminder alert unavailable",
-      "The item can be saved, but its notification could not be scheduled. Check notification permissions and edit the item to try again."
+      `${error instanceof Error ? error.message : "Could not schedule the notification."} The item can be saved without alerts; edit it to try again.`
     );
 
     return [];
@@ -957,107 +1016,33 @@ export async function scheduleItemNotifications(
  * Test notification
  * --------------------------------- */
 
-export async function scheduleTestNotification(): Promise<
-  string[] | undefined
-> {
-  if (!__DEV__) {
-    return undefined;
-  }
-
-  const prepared =
-    await prepareNotifications();
-
-  if (!prepared) {
-    return undefined;
-  }
-
+export async function scheduleTestNotification(): Promise<string | undefined> {
+  if (!__DEV__) return undefined;
+  if (!(await prepareNotifications())) return undefined;
   try {
-    const settings =
-      await getNotificationSettings();
-
-    const ids: string[] =
-      [];
-
-    for (
-      let index = 0;
-      index <
-      settings.repeatCount;
-      index += 1
-    ) {
-      const id =
-        await Notifications.scheduleNotificationAsync(
-          {
-            content: {
-              title:
-                "Notiva Test",
-
-              body:
-                `Alert ${index + 1} of ${settings.repeatCount}`,
-
-              sound:
-                "default",
-
-              priority:
-                Notifications
-                  .AndroidNotificationPriority
-                  .HIGH,
-
-              data: {
-                itemId:
-                  "dev-test",
-
-                itemType:
-                  "reminder",
-
-                alertNumber:
-                  index + 1,
-
-                totalAlerts:
-                  settings.repeatCount,
-              },
-            },
-
-            trigger: {
-              type:
-                Notifications
-                  .SchedulableTriggerInputTypes
-                  .TIME_INTERVAL,
-
-              seconds:
-                5 +
-                index *
-                  settings
-                    .repeatIntervalSeconds,
-
-              repeats:
-                false,
-
-              ...(Platform.OS ===
-              "android"
-                ? {
-                    channelId:
-                      ANDROID_CHANNEL_ID,
-                  }
-                : {}),
-            },
-          }
-        );
-
-      ids.push(id);
-    }
-
-    return ids;
+    const now = new Date();
+    const date = new Date(now.getTime() + 10_000);
+    const id = await Notifications.scheduleNotificationAsync({
+      content: {
+        title: "Notiva Test",
+        body: "Single 10-second notification test",
+        sound: "default",
+        priority: Notifications.AndroidNotificationPriority.HIGH,
+        data: { itemId: "dev-test", itemType: "reminder", alertNumber: 1, totalAlerts: 1 },
+      },
+      trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.DATE,
+        date,
+        ...(Platform.OS === "android" ? { channelId: ANDROID_CHANNEL_ID } : {}),
+      },
+    });
+    debug({ currentTime: now.toISOString(), scheduledFor: date.toISOString(),
+      scheduledLocalTime: date.toString(), notificationId: id });
+    await verifyScheduledNotifications([id]);
+    return id;
   } catch (error) {
-    console.warn(
-      "Test notification failed:",
-      error
-    );
-
-    Alert.alert(
-      "Test failed",
-      "Could not schedule the test notification."
-    );
-
+    console.warn("Test notification failed:", error);
+    Alert.alert("Test failed", "Could not schedule the test notification. Check notification permission and Alarms & reminders access in phone settings.");
     return undefined;
   }
 }

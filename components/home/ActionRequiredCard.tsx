@@ -1,4 +1,5 @@
-import { useRef } from "react";
+import CompletionNoteModal from "../common/CompletionNoteModal";
+import { useRef, useState } from "react";
 import { Alert, Animated, PanResponder, StyleSheet, Text, View } from "react-native";
 
 import { ItemStatus, ItemType, Priority } from "../../types/item";
@@ -14,7 +15,7 @@ type Props = {
   status: ItemStatus;
   type: ItemType;
   onPress: () => void;
-  onDone: () => Promise<void> | void;
+  onDone: (completionNote?: string) => Promise<void> | void;
   onSkip: () => Promise<void> | void;
   onReschedule: () => void;
 };
@@ -22,14 +23,15 @@ type Props = {
 const SWIPE_THRESHOLD = 72;
 
 export default function ActionRequiredCard(props: Props) {
+  const [showCompletion, setShowCompletion] = useState(false);
+  const latest = useRef(props);
+  latest.current = props;
   const translateX = useRef(new Animated.Value(0)).current;
   const reset = () => Animated.spring(translateX, { toValue: 0, useNativeDriver: true }).start();
   const confirmDone = () => {
     reset();
-    Alert.alert("Mark as Done?", `Mark “${props.title}” as done?`, [
-      { text: "Cancel", style: "cancel" },
-      { text: "Done", onPress: () => { void props.onDone(); } },
-    ]);
+    const current = latest.current;
+    if ((current.type === "reminder" || current.type === "task") && ["Pending", "Missed", "Overdue"].includes(current.status)) setShowCompletion(true);
   };
   const chooseAction = () => {
     reset();
@@ -59,6 +61,8 @@ export default function ActionRequiredCard(props: Props) {
       <Animated.View {...panResponder.panHandlers} style={{ transform: [{ translateX }] }}>
         <ReminderCard {...props} onToggle={undefined} />
       </Animated.View>
+      <CompletionNoteModal visible={showCompletion} itemTitle={props.title} onClose={() => setShowCompletion(false)}
+        onConfirm={async note => { await latest.current.onDone(note); setShowCompletion(false); }} />
     </View>
   );
 }
