@@ -8,6 +8,8 @@ import {
 } from "@react-navigation/native";
 
 import * as Notifications from "expo-notifications";
+import { AppState, Platform } from "react-native";
+import { recordNotification } from "../services/notificationHistory";
 
 import {
   router,
@@ -38,6 +40,25 @@ export default function RootLayout() {
   const received = useRef(new Set<string>());
 
   useEffect(() => {
+    if (Platform.OS === "web") return;
+    const record = (notification: Notifications.Notification) => {
+      void recordNotification(notification).catch(error => console.warn("Could not save notification history:", error));
+    };
+    const recoverPresented = () => {
+      void Notifications.getPresentedNotificationsAsync().then(notifications => {
+        notifications.forEach(record);
+      }).catch(error => console.warn("Could not recover notification history:", error));
+    };
+    const receivedSubscription = Notifications.addNotificationReceivedListener(record);
+    const appStateSubscription = AppState.addEventListener("change", state => {
+      if (state === "active") recoverPresented();
+    });
+    recoverPresented();
+    return () => { receivedSubscription.remove(); appStateSubscription.remove(); };
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS === "web") return;
     const handle = async (response: Notifications.NotificationResponse) => {
       const itemId = response.notification.request.content.data?.itemId;
       if (typeof itemId !== "string" || !itemId.trim()) return;

@@ -1,6 +1,7 @@
 import * as Notifications from "expo-notifications";
 import { getItemById } from "./itemStorage";
 import { cancelNotifications } from "./notificationService";
+import { recordNotification } from "./notificationHistory";
 
 export function notificationResponseKey(response: Notifications.NotificationResponse) {
   return `${response.notification.request.identifier}:${response.notification.date}:${response.actionIdentifier}`;
@@ -17,6 +18,10 @@ export async function consumeNotificationResponse(
   const itemId = response.notification.request.content.data?.itemId;
   if (typeof itemId !== "string" || !itemId.trim()) return;
   handled.add(responseKey);
+  // History failures must not prevent the existing phone-tap cleanup/routing.
+  await recordNotification(response.notification, true).catch(error => {
+    console.warn("Could not save tapped notification history:", error);
+  });
   try {
     const ids = new Set<string>();
     // The OS lookup also covers dev tests and alerts scheduled just before an

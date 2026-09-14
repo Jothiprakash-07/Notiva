@@ -1,4 +1,5 @@
 import { Tabs } from "expo-router";
+import { useNotificationHistory } from "../../hooks/useNotificationHistory";
 import {
   Image,
   StyleSheet,
@@ -16,6 +17,7 @@ const ACTIVE_COLOR = "#4d3fe6";
 const INACTIVE_COLOR = "#8b8f9c";
 
 export default function TabLayout() {
+  const { unreadCount } = useNotificationHistory();
   const insets = useSafeAreaInsets();
   // Reserve the system area once, with a small baseline on inset-free phones.
   // Keep the icon/label area constant even when Android reports a larger inset.
@@ -122,6 +124,8 @@ export default function TabLayout() {
         name="notifications"
         options={{
           title: "Notifications",
+          tabBarBadge: unreadCount || undefined,
+          tabBarBadgeStyle: { backgroundColor: ACTIVE_COLOR, color: "#ffffff" },
 
           tabBarIcon: ({
             color,
