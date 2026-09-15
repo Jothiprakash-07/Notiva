@@ -1,4 +1,5 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
+import { Platform } from "react-native";
 import { router } from "expo-router";
 import {
   useEffect,
@@ -285,7 +286,9 @@ export default function ProfileScreen() {
         const id = await scheduleTestNotification();
 
         if (id) {
-          Alert.alert("Test scheduled", "One notification is scheduled for 10 seconds from now.");
+          Alert.alert("Test scheduled", Platform.OS === "android"
+            ? "A native alarm test reminder is saved for 45 seconds from now. Lock your screen to test it."
+            : "One notification is scheduled for 10 seconds from now.");
         }
       } catch {
         Alert.alert(

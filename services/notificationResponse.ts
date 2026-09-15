@@ -39,7 +39,11 @@ export async function consumeNotificationResponse(
     } catch (error) {
       console.warn("Could not inspect scheduled notifications:", error);
     }
-    await cancelNotifications([...ids]);
+    // A pre-alert tap opens the item; it must not cancel the main alarm or
+    // future recurring pre-alerts. Preserve legacy cleanup for older payloads.
+    if (response.notification.request.content.data?.alertType !== "pre-alert") {
+      await cancelNotifications([...ids]);
+    }
     // Never write item status, completion, Skip, or deletion on a tap.
     // Clear only this response, so normal launches cannot replay it. Leave a
     // newer native response available for its listener/cold-start handler.

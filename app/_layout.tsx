@@ -1,5 +1,6 @@
 import "../services/notificationService";
 import "react-native-reanimated";
+import NativeAlarmCompletion from "../components/common/NativeAlarmCompletion";
 
 import {
   DarkTheme,
@@ -137,6 +138,7 @@ export default function RootLayout() {
         <StatusBar
           style="auto"
         />
+        <NativeAlarmCompletion />
       </ThemeProvider>
     </AuthProvider>
   );

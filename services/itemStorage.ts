@@ -1,4 +1,6 @@
 import { Platform } from "react-native";
+import * as Notifications from "expo-notifications";
+import { nativeAlarm, NATIVE_ALARM_PREFIX, scheduleNativeAlarm } from "./nativeAlarm";
 
 import { ReminderItem } from "../types/item";
 
@@ -10,9 +12,37 @@ import {
 import {
   cancelNotifications,
   scheduleItemNotifications,
+  getNotificationSettings,
 } from "./notificationService";
 
 const KEY = "notiva.items.v1";
+
+/** Upgrade already-saved Expo main alerts once, retaining their pre-alerts. */
+export function migrateAndroidMainAlarms() {
+  if (Platform.OS !== "android") return Promise.resolve();
+  return mutate(async () => {
+    if (!(await nativeAlarm().canSchedule()) || !(await Notifications.getPermissionsAsync()).granted) return;
+    const items = await read();
+    const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+    const settings = await getNotificationSettings();
+    for (const item of items) {
+      if (isItemReadOnly(item) || !item.notificationIds.length || item.notificationIds.some(id => id.startsWith(NATIVE_ALARM_PREFIX))) continue;
+      if ((!item.repeat || item.repeat === "none") && new Date(item.startAt).getTime() <= Date.now()) continue;
+      const requests = scheduled.filter(request => request.content.data?.itemId === item.id);
+      const preIds = requests.filter(request => request.content.data?.alertType === "pre-alert").map(request => request.identifier);
+      const oldMainIds = requests.filter(request => request.content.data?.alertType !== "pre-alert").map(request => request.identifier);
+      const nativeId = await scheduleNativeAlarm(item, settings.vibration, preIds);
+      try {
+        await cancelNotifications(oldMainIds);
+        item.notificationIds = [...preIds, nativeId];
+        await persist(items);
+      } catch (error) {
+        await nativeAlarm().cancel(nativeId);
+        throw error;
+      }
+    }
+  });
+}
 
 let writes: Promise<unknown> =
   Promise.resolve();

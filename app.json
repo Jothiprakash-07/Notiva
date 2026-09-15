@@ -48,7 +48,8 @@
           "color": "#4d3fe6"
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      "./plugins/withNativeAlarm"
     ],
     "experiments": {
       "typedRoutes": true,
