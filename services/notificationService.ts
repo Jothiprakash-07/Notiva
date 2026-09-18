@@ -1449,7 +1449,18 @@ async function scheduleRecurringNotifications(
  * MAIN PUBLIC SCHEDULER
  * ========================================================= */
 
-export async function scheduleItemNotifications(
+const schedulingItems = new Map<string, Promise<string[]>>();
+
+export function scheduleItemNotifications(item: ReminderItem, requireSuccess = false): Promise<string[]> {
+  const previous = schedulingItems.get(item.id) ?? Promise.resolve([]);
+  const next = previous.catch(() => []).then(() => scheduleItemNotificationsOnce(item, requireSuccess));
+  schedulingItems.set(item.id, next);
+  const clear = () => { if (schedulingItems.get(item.id) === next) schedulingItems.delete(item.id); };
+  void next.then(clear, clear);
+  return next;
+}
+
+async function scheduleItemNotificationsOnce(
   item: ReminderItem,
   requireSuccess = false
 ): Promise<string[]> {
@@ -1489,6 +1500,14 @@ export async function scheduleItemNotifications(
 
     if (Platform.OS === "android" && !(await nativeAlarm().canSchedule())) {
       throw new Error("Allow Alarms & reminders access in Android Settings, then save again.");
+    }
+
+    if (Platform.OS === "android") {
+      // Native PendingIntent identity replaces the main alarm. Expo generates new
+      // IDs, so remove this item's previous requests before creating replacements.
+      const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+      await Promise.all(scheduled.filter(request => request.content.data?.itemId === item.id)
+        .map(request => Notifications.cancelScheduledNotificationAsync(request.identifier)));
     }
 
     const preAlertDate =

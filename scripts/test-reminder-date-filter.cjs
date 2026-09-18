@@ -17,6 +17,7 @@ const root = createRoot(document.getElementById('root'));
 let picker, params = {}, rows = [], alerts = [], session = 0;
 const view = tag => ({ children, onPress, accessibilityLabel, disabled }) => React.createElement(tag, { onClick: onPress, 'aria-label': accessibilityLabel, disabled }, children);
 const native = {
+  BackHandler: { addEventListener: () => ({ remove() {} }) },
   Alert: { alert: (...args) => alerts.push(args) }, Keyboard: { dismiss() {} }, Platform: { OS: 'android' },
   View: view('div'), Text: view('span'), Pressable: view('button'), ScrollView: view('section'),
   Modal: ({ visible, children }) => visible ? React.createElement('article', null, children) : null,

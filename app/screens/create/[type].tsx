@@ -11,7 +11,7 @@ import DateTimePicker, {
 
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { router, useLocalSearchParams } from "expo-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   Alert,
@@ -331,9 +331,10 @@ export default function CreateItemScreen() {
     }
   };
 
+  const savingRef = useRef(false);
   const save = async () => {
     if (
-      saving ||
+      savingRef.current || saving ||
       loading ||
       locked
     ) {
@@ -389,6 +390,7 @@ export default function CreateItemScreen() {
       );
     }
 
+    savingRef.current = true;
     setSaving(true);
     setError("");
 
@@ -529,7 +531,7 @@ export default function CreateItemScreen() {
         });
 
         await cancelNotifications(
-          existing.notificationIds
+          existing.notificationIds.filter(id => !scheduledIds.includes(id))
         );
 
         await updateItem(item);
@@ -559,6 +561,7 @@ export default function CreateItemScreen() {
         );
       }
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };

@@ -15,12 +15,16 @@ global.document = dom.window.document;
 global.IS_REACT_ACT_ENVIRONMENT = true;
 let alerts = [], animations = [], calls = [], items = [], focused = true, closed = false, fail = false, release;
 let gestures, exits = [], snaps = [], failRefresh = false;
+let nativeDone;
+let completionRoute;
+const alarmBridge = { acknowledgeDone: async () => { nativeDone = undefined; } };
 const wrapper = (tag) => function NativeTestView({ children, onPress, disabled, accessibilityLabel, importantForAccessibility, pointerEvents }) { return React.createElement(tag, {
   onClick: onPress, disabled, 'aria-label': accessibilityLabel,
   'data-accessibility': importantForAccessibility, 'data-pointer-events': pointerEvents,
 }, children); };
 const native = {
   Platform: { OS: 'android' }, KeyboardAvoidingView: wrapper('div'),
+  AppState: { currentState: 'active', addEventListener: () => ({ remove() {} }) },
   TextInput: ({ value, onChangeText, maxLength, editable, accessibilityLabel }) => React.createElement('textarea', { value, maxLength, disabled: !editable, 'aria-label': accessibilityLabel, onInput: event => onChangeText(event.target.value), onChange: () => {} }),
   View: wrapper('div'), Text: wrapper('span'), Pressable: wrapper('button'), ScrollView: wrapper('section'),
   Modal: ({ visible, children }) => visible ? React.createElement('article', null, children) : null,
@@ -50,7 +54,7 @@ function load(file) {
   if (cache.has(full)) return cache.get(full).exports;
   const module = { exports: {} }; cache.set(full, module);
   const code = ts.transpileModule(fs.readFileSync(full, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText;
-  vm.runInNewContext(code, { module, exports: module.exports, console, require: (id) => {
+  vm.runInNewContext(code, { module, exports: module.exports, console, setInterval, clearInterval, require: (id) => {
     if (id === 'react' || id === 'react/jsx-runtime') return require(id);
     if (id === 'react-native') return native;
     if (id === 'react-native-gesture-handler') {
@@ -69,8 +73,9 @@ function load(file) {
     if (id === 'react-native-safe-area-context') return { SafeAreaView: native.View };
     if (id === '@expo/vector-icons/Ionicons') return { default: () => null };
     if (id === '@react-navigation/native') return { useIsFocused: () => focused };
-    if (id === 'expo-router') return { router: { push: (route) => calls.push(route) } };
+    if (id === 'expo-router') return { router: { push: (route) => calls.push(route), replace: route => { completionRoute = route; } } };
     if (id.endsWith('services/itemStorage')) return storage;
+    if (id.endsWith('services/nativeAlarm')) return { nativeAlarm: () => alarmBridge, readPendingAlarmDone: async () => nativeDone };
     const base = path.resolve(path.dirname(full), id);
     return load(path.relative(path.resolve(__dirname, '..'), base + (fs.existsSync(base + '.tsx') ? '.tsx' : '.ts')));
   } }, { filename: full });
@@ -245,7 +250,29 @@ async function setup(count) {
   assert.equal(document.querySelector('textarea').disabled, true);
   await click('Cancel'); assert.equal(closeCalls, 1, 'Cancel blocked during save');
   const resolve = pending; pending = undefined; await act(async () => resolve());
+  await act(async () => root.render(null));
+  fail = false; release = undefined; calls = [];
+  items = [{ id: 'alarm', type: 'reminder', title: 'Native Done', startAt: '2020-01-01T10:00:00' }];
+  storage.getItemById = async id => items.find(item => item.id === id);
+  storage.migrateAndroidMainAlarms = async () => {};
+  const NativeCompletion = load('components/common/NativeAlarmCompletion.tsx').default;
+  nativeDone = { token: 'cancel-token', itemId: 'alarm' };
+  await act(async () => root.render(React.createElement(NativeCompletion)));
+  assert.ok(document.querySelector('textarea'), 'Native Done opens existing completion modal');
+  assert.equal(calls.length, 0, 'Native Done cannot complete before confirmation');
+  await click('Cancel');
+  assert.equal(calls.length, 0); assert.equal(nativeDone, undefined);
+  await act(async () => root.render(null));
+  nativeDone = { token: 'confirm-token', itemId: 'alarm' };
+  await act(async () => root.render(React.createElement(NativeCompletion)));
+  await click('Skip Note');
+  assert.deepEqual(calls, ['done']); assert.equal(storage.lastNote, undefined);
+  assert.equal(items[0].completed, true); assert.equal(nativeDone, undefined);
+  assert.equal(completionRoute.params.notificationItemId, 'alarm');
+  assert.equal(completionRoute.params.notificationResponseId, 'confirm-token');
+  assert.equal(document.querySelector('textarea'), null);
   await act(async () => root.unmount());
+  console.log('PASS: native Done recovery opens existing modal, Cancel preserves status, Skip Note confirms once and acknowledges the native action.');
   console.log('PASS: shared completion modal trim/empty/Skip Note/Cancel/reset, 300-character limit, failed-save retry, double-tap lock, and Action Required completion failure/success.');
   console.log('PASS: session-only auto-open, 1/2/3/5-card stacks, back-card isolation, Action menu/cancel, confirmation cancellation, Done/Skip/Delete, close/reopen, reschedule, temporary swipes in both directions, zero swipe storage calls, reopen after dismiss-all, 35% threshold, snap-back, and real-action persistence-before-exit.');
 })().catch((error) => { console.error(error); process.exitCode = 1; });

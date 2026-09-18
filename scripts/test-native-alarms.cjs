@@ -44,7 +44,7 @@ function harness(os = 'android') {
     if (cache.has(file)) return cache.get(file).exports;
     const module = { exports: {} }; cache.set(file, module);
     const code = ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText;
-    vm.runInNewContext(code, { module, exports: module.exports, __DEV__: true, Date, console: { log() {}, warn() {} },
+    vm.runInNewContext(code, { module, exports: module.exports, __DEV__: true, Date, Error, console: { log() {}, warn() {} },
       require: name => mocks[name] || load(path.relative(root, path.resolve(path.dirname(file), name + '.ts'))),
     }, { filename: file });
     return module.exports;
@@ -59,11 +59,14 @@ const makeItem = (overrides = {}) => ({
 (async () => {
   const h = harness(), service = h.load('services/notificationService.ts'), storage = h.load('services/itemStorage.ts');
   await service.saveNotificationSettings({ repeatCount: 5, repeatIntervalSeconds: 3, vibration: false });
-  const item = makeItem();
+  const tenPM = new Date(); tenPM.setDate(tenPM.getDate() + 1); tenPM.setHours(22, 0, 0, 0);
+  const item = makeItem({ startAt: tenPM.toISOString() });
   item.notificationIds = await service.scheduleItemNotifications(item, true);
   assert.equal(h.expo.size, 1); assert.equal(h.alarms.size, 1);
   const pre = [...h.expo.values()][0], main = [...h.alarms.values()][0];
   assert.equal(pre.trigger.date.getTime(), new Date(item.startAt).getTime() - 300000);
+  assert.equal(pre.trigger.date.getHours(), 21); assert.equal(pre.trigger.date.getMinutes(), 55);
+  assert.equal(pre.content.sound, 'default');
   assert.equal(main.startAt, new Date(item.startAt).getTime()); assert.equal(main.vibration, false);
   assert.equal(item.notificationIds.length, 2); assert.equal(main.preAlertIds[0], pre.identifier);
   await storage.saveItem(item);
@@ -74,11 +77,45 @@ const makeItem = (overrides = {}) => ({
   assert.equal(h.alarms.size, 0); assert.equal(h.expo.size, 0);
   assert.equal((await storage.getItemById(item.id)).completionNote, 'Finished reading');
 
+  const repeated = harness(), repeatedService = repeated.load('services/notificationService.ts');
+  const repeatedStorage = repeated.load('services/itemStorage.ts');
+  const edited = makeItem();
+  await Promise.all(Array.from({ length: 5 }, () => repeatedService.scheduleItemNotifications(edited, true)));
+  assert.equal(repeated.expo.size, 1, 'concurrent scheduling must leave one pre-alert');
+  assert.equal(repeated.alarms.size, 1, 'concurrent scheduling must leave one native alarm');
+  edited.notificationIds = await repeatedService.scheduleItemNotifications(edited, true);
+  await repeatedStorage.saveItem(edited);
+  for (let i = 1; i <= 3; i++) {
+    await repeatedStorage.rescheduleItem({ ...edited, startAt: new Date(Date.now() + (i + 1) * 3600000).toISOString() });
+    assert.equal(repeated.expo.size, 1);
+    assert.equal(repeated.alarms.size, 1);
+    const latest = await repeatedStorage.getItemById(edited.id);
+    assert.equal([...repeated.alarms.values()][0].startAt, new Date(latest.startAt).getTime());
+  }
+  await repeatedStorage.deleteItem(edited.id);
+  assert.equal(repeated.expo.size, 0);
+  assert.equal(repeated.alarms.size, 0);
+
+  // Evaluate the edit screen's actual cancellation argument against reused IDs.
+  const screen = ts.createSourceFile('screen.tsx', fs.readFileSync(path.join(root, 'app/screens/create/[type].tsx'), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  let editCleanup;
+  function visit(node) {
+    if (ts.isCallExpression(node) && node.expression.getText(screen) === 'cancelNotifications' && node.arguments[0]?.getText(screen).startsWith('existing.notificationIds')) editCleanup = node.arguments[0].getText(screen);
+    ts.forEachChild(node, visit);
+  }
+  visit(screen);
+  assert.ok(editCleanup);
+  assert.deepEqual(Array.from(vm.runInNewContext(editCleanup, {
+    existing: { notificationIds: ['expo-old', 'native-alarm:reminder'] },
+    scheduledIds: ['expo-new', 'native-alarm:reminder'],
+  })), ['expo-old'], 'editing must not cancel the replacement native alarm');
+
   for (const repeat of ['none', 'daily', 'weekly', 'weekdays', 'monthly', 'yearly']) {
     const r = harness(); const s = r.load('services/notificationService.ts');
     const ids = await s.scheduleItemNotifications(makeItem({ repeat, alertBefore: { minutes: 0 } }), true);
     assert.equal(ids.length, 1); assert.equal(r.expo.size, 0); assert.equal(r.alarms.size, 1);
     assert.equal([...r.alarms.values()][0].repeat, repeat);
+    assert.equal([...r.alarms.values()][0].vibration, true);
   }
   const denied = harness(); denied.setExact(false);
   await assert.rejects(denied.load('services/notificationService.ts').scheduleItemNotifications(makeItem(), true), /Alarms & reminders/);

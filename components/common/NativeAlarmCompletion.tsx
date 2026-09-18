@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { AppState, Alert } from 'react-native';
+import { router } from 'expo-router';
 import CompletionNoteModal from './CompletionNoteModal';
 import { getItemById, toggleComplete, migrateAndroidMainAlarms } from '../../services/itemStorage';
 import { nativeAlarm, readPendingAlarmDone } from '../../services/nativeAlarm';
@@ -51,5 +52,10 @@ export default function NativeAlarmCompletion() {
       if (!pending) return;
       await toggleComplete(pending.item.id, note);
       await close();
+      // The screen behind this global modal may have loaded before completion.
+      // Reuse notification routing to reload storage and show the saved item.
+      router.replace({ pathname: '/(tabs)', params: {
+        notificationItemId: pending.item.id, notificationResponseId: pending.token,
+      } });
     }} />;
 }
