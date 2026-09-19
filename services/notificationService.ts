@@ -58,6 +58,7 @@ export type NotificationRepeatInterval =
   | 10;
 
 export type NotificationSettings = {
+  preAlerts: boolean;
   repeatCount: NotificationRepeatCount;
   repeatIntervalSeconds: NotificationRepeatInterval;
   vibration: boolean;
@@ -65,6 +66,7 @@ export type NotificationSettings = {
 
 export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings =
   {
+    preAlerts: true,
     repeatCount: 1,
     repeatIntervalSeconds: 5,
     vibration: true,
@@ -74,6 +76,7 @@ function normalizeSettings(
   value: Partial<NotificationSettings> | null
 ): NotificationSettings {
   return {
+    preAlerts: typeof value?.preAlerts === "boolean" ? value.preAlerts : true,
     repeatCount: [1, 3, 5].includes(
       value?.repeatCount as number
     )
@@ -1026,7 +1029,7 @@ async function scheduleOneTimeNotifications(
 
   if (
     item.alertBefore.minutes >
-    0
+    0 && (await getNotificationSettings()).preAlerts
   ) {
     if (
       !Number.isFinite(
@@ -1309,7 +1312,7 @@ async function scheduleRecurringNotifications(
 
   if (
     item.alertBefore.minutes >
-    0
+    0 && (await getNotificationSettings()).preAlerts
   ) {
     const preTriggers =
       recurringTriggerForDate(

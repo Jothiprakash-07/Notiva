@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { API_BASE_URL } from "../../../services/apiConfig";
 import * as Clipboard from "expo-clipboard";
 import { useState } from "react";
 import {
@@ -19,9 +20,6 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 const popupLogo = require("../../../assets/images/Blue-logo.png");
 
-// Physical phone cannot use localhost.
-// Update this IP when your PC network IP changes.
-const API_BASE_URL = "http://192.168.1.239:5000";
 
 type OrganizationRegisterScreenProps = {
   onBack?: () => void;

@@ -1,5 +1,5 @@
 import { Tabs } from "expo-router";
-import { useNotificationHistory } from "../../hooks/useNotificationHistory";
+import Ionicons from "@expo/vector-icons/Ionicons";
 import {
   Image,
   StyleSheet,
@@ -9,7 +9,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const homeIcon = require("../../assets/icon/Nav/home.png");
 const fileIcon = require("../../assets/icon/Nav/file-text.png");
-const bellIcon = require("../../assets/icon/Nav/bell.png");
 const teamIcon = require("../../assets/icon/Nav/building-2.png");
 const userIcon = require("../../assets/icon/Nav/user.png");
 
@@ -17,7 +16,6 @@ const ACTIVE_COLOR = "#4d3fe6";
 const INACTIVE_COLOR = "#8b8f9c";
 
 export default function TabLayout() {
-  const { unreadCount } = useNotificationHistory();
   const insets = useSafeAreaInsets();
   // Reserve the system area once, with a small baseline on inset-free phones.
   // Keep the icon/label area constant even when Android reports a larger inset.
@@ -121,21 +119,17 @@ export default function TabLayout() {
       />
 
       <Tabs.Screen
-        name="notifications"
+        name="analytics"
         options={{
-          title: "Notifications",
-          tabBarBadge: unreadCount || undefined,
-          tabBarBadgeStyle: { backgroundColor: ACTIVE_COLOR, color: "#ffffff" },
+          title: "Analytics",
 
           tabBarIcon: ({
             color,
             focused,
           }) => (
-            <TabIcon
-              source={bellIcon}
-              color={color}
-              focused={focused}
-            />
+            <View style={[styles.iconWrap, focused && styles.iconWrapActive]}>
+              <Ionicons name="stats-chart-outline" size={21} color={color} />
+            </View>
           ),
         }}
       />
@@ -175,6 +169,7 @@ export default function TabLayout() {
           ),
         }}
       />
+      <Tabs.Screen name="notifications" options={{ href: null }} />
     </Tabs>
   );
 }

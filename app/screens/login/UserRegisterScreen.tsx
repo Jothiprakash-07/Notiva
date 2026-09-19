@@ -16,7 +16,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 // Physical phone cannot use localhost.
 // Update this IP when your PC network IP changes.
-const API_BASE_URL = "http://192.168.1.239.42:5000";
+import { API_BASE_URL } from "../../../services/apiConfig";
 
 type UserRegisterScreenProps = {
   onBack?: () => void;

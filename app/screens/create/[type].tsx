@@ -1,4 +1,5 @@
 import { formatDate, formatTime } from "../../../utils/dateFormat";
+import { getAppSettings } from "../../../services/appSettings";
 import { priorityColors } from "../../../constants/itemColors";
 import {
   getItemStatus,
@@ -62,6 +63,7 @@ const alerts: AlertBefore[] = [
   { label: "At Time", minutes: 0 },
   { label: "5 Minutes Before", minutes: 5 },
   { label: "10 Minutes Before", minutes: 10 },
+  { label: "15 Minutes Before", minutes: 15 },
   { label: "30 Minutes Before", minutes: 30 },
   { label: "1 Hour Before", minutes: 60 },
   { label: "1 Day Before", minutes: 1440 },
@@ -178,6 +180,17 @@ export default function CreateItemScreen() {
     useState(
       type === "birthday"
     );
+
+  const alertTouched = useRef(false);
+  useEffect(() => {
+    if (params.id || type !== "reminder") return;
+    let active = true;
+    void getAppSettings().then(settings => {
+      const option = alerts.find(value => value.minutes === settings.defaultAlertBefore);
+      if (active && !alertTouched.current && option) setAlertBefore(option);
+    }).catch(() => { /* Keep the existing five-minute default if preferences cannot be read. */ });
+    return () => { active = false; };
+  }, [params.id, type]);
 
   const [location, setLocation] =
     useState("");
@@ -1472,11 +1485,12 @@ export default function CreateItemScreen() {
                       active &&
                         styles.active,
                     ]}
-                    onPress={() =>
+                    onPress={() => {
+                      alertTouched.current = true;
                       setAlertBefore(
                         value
-                      )
-                    }
+                      );
+                    }}
                   >
                     <Text
                       style={

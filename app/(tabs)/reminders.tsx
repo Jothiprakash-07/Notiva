@@ -61,6 +61,7 @@ function dateRangeLabel({ from, to }: DateRange): string {
 type ListFilter =
   | "all"
   | "done"
+  | "pending"
   | "overdue";
 
 const filters: {
@@ -72,6 +73,11 @@ const filters: {
     label: "All",
     value: "all",
     icon: "list-outline",
+  },
+  {
+    label: "Pending",
+    value: "pending",
+    icon: "time-outline",
   },
   {
     label: "Done",
@@ -94,6 +100,7 @@ function normalizeFilter(
       : value;
 
   return selected === "done" ||
+    selected === "pending" ||
     selected === "overdue"
     ? selected
     : "all";
@@ -120,6 +127,10 @@ function displayItem(
 function filterTitle(
   filter: ListFilter
 ) {
+  if (filter === "pending") {
+    return "Pending items";
+  }
+
   if (filter === "done") {
     return "Completed items";
   }
@@ -134,6 +145,14 @@ function filterTitle(
 function emptyContent(
   filter: ListFilter
 ) {
+  if (filter === "pending") {
+    return {
+      icon: "time-outline" as const,
+      title: "No pending items",
+      text: "Pending reminders and tasks, and upcoming or ongoing events will appear here.",
+    };
+  }
+
   if (filter === "done") {
     return {
       icon:
@@ -340,6 +359,10 @@ export default function RemindersScreen() {
     const matching = items.filter(item => {
       if (selectedFilter === "done" && !isCountedAsDone(item)) return false;
       if (selectedFilter === "overdue" && !isCountedAsOverdue(item)) return false;
+      if (selectedFilter === "pending") {
+        const status = getItemStatus(item);
+        if (item.type === "birthday" || !["Pending", "Upcoming", "Ongoing"].includes(status)) return false;
+      }
       if (query && ![item.title, item.description, item.category, item.type]
         .some(value => value?.toLowerCase().includes(query))) return false;
       if (from !== null || until !== null) {

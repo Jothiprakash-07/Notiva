@@ -64,11 +64,16 @@ export const registerUser = async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
+    const verifiedCode = typeof organizationCode === "string" ? organizationCode.trim().toUpperCase() : "";
+    if (verifiedCode && !(await Organization.findOne({ organizationCode: verifiedCode }))) {
+      return res.status(400).json({ success: false, message: "Organization code was not found." });
+    }
+
     const user = await User.create({
       fullName: fullName.trim(),
       email: normalizedEmail,
       mobileNumber: mobileNumber.trim(),
-      organizationCode: organizationCode?.trim() || "",
+      organizationCode: verifiedCode,
       department: department?.trim() || "",
       password: hashedPassword,
       role: "user",

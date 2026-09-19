@@ -38,7 +38,7 @@ class AlarmActivity : Activity() {
     fun label(text: String, size: Float) = TextView(this).apply {
       this.text = text; textSize = size; gravity = Gravity.CENTER; setTextColor(Color.WHITE); setPadding(0, 16, 0, 16)
     }
-    layout.addView(label("NOTIVA ALARM", 16f))
+    layout.addView(label("REMINDER", 16f))
     layout.addView(label(data.getString("title"), 30f))
     layout.addView(label(data.optString("description"), 18f))
     layout.addView(Button(this).apply { text = "Done"; setOnClickListener { done(id) } })

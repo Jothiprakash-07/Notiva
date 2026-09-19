@@ -1,4 +1,5 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
+import { API_BASE_URL } from "../../../services/apiConfig";
 import { router } from "expo-router";
 import { useState } from "react";
 import {
@@ -23,9 +24,6 @@ import { AuthSession } from "../../../types/auth";
 const headerLogo = require("../../../assets/images/notiva-logo.png");
 const popupLogo = require("../../../assets/images/Blue-logo.png");
 
-// Physical phone cannot use localhost.
-// Update this IP when your PC network IP changes.
-const API_BASE_URL = "http://192.168.1.239:5000";
 
 type LoginScreenProps = {
   onUserRegister?: () => void;
