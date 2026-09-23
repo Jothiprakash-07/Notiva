@@ -1,3 +1,4 @@
+/* global __dirname */
 const { withAndroidManifest, withMainApplication, withDangerousMod } = require('expo/config-plugins');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -38,6 +39,13 @@ module.exports = function withNativeAlarm(config) {
     fs.mkdirSync(target, { recursive: true });
     for (const file of fs.readdirSync(path.join(__dirname, 'native-alarm'))) {
       if (file.endsWith('.kt')) fs.copyFileSync(path.join(__dirname, 'native-alarm', file), path.join(target, file));
+    }
+    const rawSource = path.join(__dirname, 'native-alarm/res/raw');
+    const rawTarget = path.join(config.modRequest.platformProjectRoot, 'app/src/main/res/raw');
+    fs.mkdirSync(rawTarget, { recursive: true });
+    for (const file of fs.readdirSync(rawSource)) {
+      if (!/^[a-z][a-z0-9_]*\.mp3$/.test(file)) throw new Error(`Invalid alarm resource name: ${file}`);
+      fs.copyFileSync(path.join(rawSource, file), path.join(rawTarget, file));
     }
     return config;
   }]);

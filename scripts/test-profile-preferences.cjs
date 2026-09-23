@@ -57,15 +57,15 @@ function harness(os, files = new Map()) {
   for (const os of ['web', 'android', 'ios']) {
     const h = harness(os);
     const settings = h.load('services/appSettings.ts');
-    assert.equal((await settings.getAppSettings()).defaultAlertBefore, 5);
-    for (const minutes of [0, 5, 10, 15, 30, 60]) {
-      await settings.saveAppSettings({ defaultAlertBefore: minutes, weekStartsOn: 0 });
+    assert.equal((await settings.getAppSettings()).weekStartsOn, 1);
+    for (const weekStartsOn of [0, 1]) {
+      await settings.saveAppSettings({ weekStartsOn });
       const restarted = harness(os, h.files).load('services/appSettings.ts');
-      assert.equal((await restarted.getAppSettings()).defaultAlertBefore, minutes);
-      assert.equal((await restarted.getAppSettings()).weekStartsOn, 0);
+      assert.equal((await restarted.getAppSettings()).defaultAlertBefore, undefined);
+      assert.equal((await restarted.getAppSettings()).weekStartsOn, weekStartsOn);
     }
-    await assert.rejects(settings.saveAppSettings({ defaultAlertBefore: 99, weekStartsOn: 0 }));
-    console.log(`PASS ${os}: app preferences persist across restart; all alert options and invalid-value rejection`);
+    await assert.rejects(settings.saveAppSettings({ weekStartsOn: 2 }));
+    console.log(`PASS ${os}: week-start preferences persist; global alert default removed; invalid-value rejection`);
   }
   const a = harness('web').load('utils/itemAnalytics.ts');
   for (const zone of ['UTC', 'Asia/Kolkata', 'America/New_York']) {
@@ -105,13 +105,54 @@ function harness(os, files = new Map()) {
   }
   console.log('PASS pre-alert preference: one-time and recurring schedules; exact-time native alarms preserved; changes apply on scheduling only');
   const create = fs.readFileSync(path.join(root, 'app/screens/create/[type].tsx'), 'utf8');
-  assert.match(create, /if \(params.id \|\| type !== "reminder"\) return/);
-  assert.match(create, /!alertTouched.current/);
-  assert.match(create, /alertTouched.current = true/);
+  assert.doesNotMatch(create, /defaultAlertBefore|getAppSettings|alertTouched/);
+  assert.match(create, /setAlertBefore\(/);
   const profile = fs.readFileSync(path.join(root, 'app/(tabs)/profile.tsx'), 'utf8');
   assert.doesNotMatch(profile, /repeatCount|repeatIntervalSeconds|NOTIFICATION_REPEAT_OPTIONS/);
   for (const route of ['EditProfileScreen','ChangePasswordScreen','OrganizationScreen','JoinOrganizationScreen','NotificationSettingsScreen','AppSettingsScreen']) {
     assert.ok(fs.existsSync(path.join(root, `app/screens/profile/${route}.tsx`)));
   }
-  console.log('PASS route files, removed legacy notification controls, new-reminder-only default guard and user-choice race guard');
+  console.log('PASS route files, removed legacy notification controls, per-reminder alert selection preserved');
+
+  for (const os of ['android', 'ios', 'web']) {
+    const h = harness(os);
+    const service = h.load('services/notificationService.ts');
+    assert.equal((await service.getNotificationSettings()).alarmSound, 'system');
+    for (const key of ['system', 'ethereal_uplifting', 'positive_vibe', 'positive_western', 'robotic_loop', 'sandy_summer', 'unknown', null]) {
+      await service.saveNotificationSettings({ preAlerts: true, vibration: false, alarmSound: key });
+      const stored = await harness(os, h.files).load('services/notificationService.ts').getNotificationSettings();
+      assert.equal(stored.alarmSound, key && key !== 'unknown' ? key : 'system');
+      assert.equal(stored.vibration, false);
+    }
+    await service.saveNotificationSettings({ preAlerts: false, vibration: true, repeatCount: 5 });
+    const migrated = await service.getNotificationSettings();
+    assert.equal(migrated.alarmSound, 'system');
+    assert.equal(migrated.repeatCount, undefined);
+  }
+  console.log('PASS all sound keys persist, unknown/legacy settings fall back, obsolete repeat values removed');
+
+  for (const alarmSound of ['system', 'ethereal_uplifting', 'positive_vibe', 'positive_western', 'robotic_loop', 'sandy_summer']) {
+    for (const repeat of ['none', 'daily', 'weekly', 'weekdays', 'monthly', 'yearly']) {
+      for (const vibration of [false, true]) {
+        const h = harness('android');
+        const service = h.load('services/notificationService.ts');
+        await service.saveNotificationSettings({ preAlerts: true, vibration, alarmSound });
+        const item = { id: 'sound', title: 'Sound test', description: 'Keep description', type: 'reminder', repeat, startAt: new Date(Date.now() + 3600000).toISOString(), alertBefore: { minutes: 5 } };
+        await service.scheduleItemNotifications(item, true);
+        assert.equal(h.alarms.size, 1);
+        const alarm = [...h.alarms.values()][0];
+        assert.equal(alarm.alarmSound, alarmSound);
+        assert.equal(alarm.vibration, vibration);
+        assert.equal(alarm.repeat, repeat);
+        assert.equal(alarm.description, item.description);
+        assert.equal(alarm.preAlertIds.length, h.notifications.size);
+        for (const notification of h.notifications.values()) {
+          assert.equal(notification.content.sound, 'default');
+          assert.equal(notification.content.data.alertType, 'pre-alert');
+        }
+        if (repeat === 'none') assert.equal(h.notifications.size, 1);
+      }
+    }
+  }
+  console.log('PASS 72 sound/recurrence/vibration combinations: one native alarm, unchanged default pre-alert sound');
 })().catch(error => { console.error(error); process.exitCode = 1; });

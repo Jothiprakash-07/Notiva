@@ -38,7 +38,7 @@ export default function EditProfileScreen() {
   };
   return <ProfilePage title="Edit Profile" subtitle="Your personal information">
     <View style={ui.card}>
-      {([ ["fullName", "Full Name"], ["email", "Email"], ["mobileNumber", "Mobile Number"], ["department", "Department"] ] as const).map(([key, label]) => <Field key={key} label={label} value={values[key]} error={errors[key]} editable={!busy} maxLength={key === "email" ? 254 : key === "mobileNumber" ? 25 : 100} autoCapitalize={key === "email" ? "none" : "words"} keyboardType={key === "email" ? "email-address" : key === "mobileNumber" ? "phone-pad" : "default"} onChangeText={value => { setValues(current => ({ ...current, [key]: value })); setErrors(current => ({ ...current, [key]: "", form: "" })); setMessage(""); }} />)}
+      {([ ["fullName", "Full Name"], ["email", "Email"], ["mobileNumber", "Mobile Number"], ["department", "Department"] ] as const).map(([key, label]) => <Field key={key} label={label} value={values[key]} error={errors[key]} editable={!busy && key !== "email"} maxLength={key === "email" ? 254 : key === "mobileNumber" ? 25 : 100} autoCapitalize={key === "email" ? "none" : "words"} keyboardType={key === "email" ? "email-address" : key === "mobileNumber" ? "phone-pad" : "default"} onChangeText={value => { setValues(current => ({ ...current, [key]: value })); setErrors(current => ({ ...current, [key]: "", form: "" })); setMessage(""); }} />)}
     </View>
     {errors.form ? <Text accessibilityRole="alert" style={ui.error}>{errors.form}</Text> : null}
     {message ? <Text accessibilityLiveRegion="polite" style={ui.success}>{message}</Text> : null}

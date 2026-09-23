@@ -31,7 +31,7 @@ export function migrateAndroidMainAlarms() {
       const requests = scheduled.filter(request => request.content.data?.itemId === item.id);
       const preIds = requests.filter(request => request.content.data?.alertType === "pre-alert").map(request => request.identifier);
       const oldMainIds = requests.filter(request => request.content.data?.alertType !== "pre-alert").map(request => request.identifier);
-      const nativeId = await scheduleNativeAlarm(item, settings.vibration, preIds);
+      const nativeId = await scheduleNativeAlarm(item, settings, preIds);
       try {
         await cancelNotifications(oldMainIds);
         item.notificationIds = [...preIds, nativeId];

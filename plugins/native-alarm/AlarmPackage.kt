@@ -15,7 +15,26 @@ class AlarmPackage : ReactPackage {
   override fun createViewManagers(context: ReactApplicationContext): List<ViewManager<*, *>> = emptyList()
 }
 
-class AlarmModule(private val context: ReactApplicationContext) : ReactContextBaseJavaModule(context) {
+class AlarmModule(private val context: ReactApplicationContext) : ReactContextBaseJavaModule(context), LifecycleEventListener {
+  init { context.addLifecycleEventListener(this) }
+  override fun onHostResume() {}
+  override fun onHostPause() { UiThreadUtil.runOnUiThread { AlarmPreview.stop() } }
+  override fun onHostDestroy() { UiThreadUtil.runOnUiThread { AlarmPreview.stop() } }
+  override fun invalidate() {
+    context.removeLifecycleEventListener(this)
+    UiThreadUtil.runOnUiThread { AlarmPreview.stop() }
+    super.invalidate()
+  }
+  @ReactMethod fun previewSound(sound: String, p: Promise) {
+    UiThreadUtil.runOnUiThread {
+      if (context.lifecycleState != com.facebook.react.common.LifecycleState.RESUMED) {
+        p.reject("PREVIEW_BACKGROUND", "Open sound settings to preview an alarm.")
+      } else AlarmPreview.start(context, sound, p)
+    }
+  }
+  @ReactMethod fun stopPreview(p: Promise) {
+    UiThreadUtil.runOnUiThread { result(p) { AlarmPreview.stop(); null } }
+  }
   override fun getName() = "NotivaAlarm"
   private fun result(p: Promise, block: () -> Any?) { try { p.resolve(block()) } catch (e: Exception) { p.reject("ALARM_ERROR", e.message, e) } }
   @ReactMethod fun schedule(json: String, p: Promise) = result(p) { AlarmStore.schedule(context, JSONObject(json)) }

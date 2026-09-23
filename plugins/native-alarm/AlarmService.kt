@@ -41,7 +41,7 @@ class AlarmService : Service() {
    */
   private val alarms = linkedMapOf<String, JSONObject>()
 
-  private var player: MediaPlayer? = null
+  private val audio = AlarmAudio()
   private var vibrator: Vibrator? = null
   private var wakeLock: PowerManager.WakeLock? = null
 
@@ -62,6 +62,7 @@ class AlarmService : Service() {
   override fun onCreate() {
     super.onCreate()
 
+    AlarmPreview.stop()
     instance = this
 
     /**
@@ -331,6 +332,7 @@ class AlarmService : Service() {
      * Actual alarm sound + vibration start here.
      */
     startRinging(
+      data.optString("alarmSound", "system"),
       data.optBoolean(
         "vibration",
         true
@@ -359,6 +361,7 @@ class AlarmService : Service() {
    * This is the ONLY place that should create alarm sound.
    */
   private fun startRinging(
+    sound: String,
     vibrate: Boolean
   ) {
 
@@ -382,66 +385,8 @@ class AlarmService : Service() {
           }
     }
 
-    /**
-     * Only create one MediaPlayer.
-     */
-    if (player == null) {
-
-      val audioAttributes =
-        AudioAttributes.Builder()
-          .setUsage(
-            AudioAttributes.USAGE_ALARM
-          )
-          .setContentType(
-            AudioAttributes.CONTENT_TYPE_SONIFICATION
-          )
-          .build()
-
-      /**
-       * Prefer user's system alarm sound.
-       *
-       * If unavailable, fall back to notification sound.
-       */
-      val alarmUri =
-        RingtoneManager.getDefaultUri(
-          RingtoneManager.TYPE_ALARM
-        )
-          ?: RingtoneManager.getDefaultUri(
-            RingtoneManager.TYPE_NOTIFICATION
-          )
-
-      val next = MediaPlayer()
-
-      try {
-
-        next.setAudioAttributes(
-          audioAttributes
-        )
-
-        next.setDataSource(
-          this,
-          alarmUri
-        )
-
-        next.isLooping = true
-
-        next.prepare()
-
-        next.start()
-
-        player = next
-
-      } catch (e: Exception) {
-
-        next.release()
-
-        android.util.Log.e(
-          "NotivaAlarm",
-          "Alarm audio unavailable",
-          e
-        )
-      }
-    }
+    // Single owned player; switching sound releases the previous player first.
+    audio.start(this, sound, true)
 
     /**
      * Native vibration.
@@ -582,18 +527,7 @@ class AlarmService : Service() {
    */
   private fun releaseRinging() {
 
-    player?.let {
-      try {
-        if (it.isPlaying) {
-          it.stop()
-        }
-      } catch (_: Exception) {
-      }
-
-      it.release()
-    }
-
-    player = null
+    audio.stop()
 
     vibrator?.cancel()
 

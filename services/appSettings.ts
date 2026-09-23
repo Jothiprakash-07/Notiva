@@ -1,13 +1,8 @@
 import { Platform } from "react-native";
 import { useSyncExternalStore } from "react";
 
-export const alertOptions = [
-  { label: "At Time", minutes: 0 }, { label: "5 Minutes Before", minutes: 5 },
-  { label: "10 Minutes Before", minutes: 10 }, { label: "15 Minutes Before", minutes: 15 },
-  { label: "30 Minutes Before", minutes: 30 }, { label: "1 Hour Before", minutes: 60 },
-];
-export type AppSettings = { defaultAlertBefore: number; weekStartsOn: 0 | 1 };
-const defaults: AppSettings = { defaultAlertBefore: 5, weekStartsOn: 1 };
+export type AppSettings = { weekStartsOn: 0 | 1 };
+const defaults: AppSettings = { weekStartsOn: 1 };
 const key = "notiva.app.settings.v1";
 let snapshot = defaults;
 let loaded = false;
@@ -31,7 +26,6 @@ export function getAppSettings(): Promise<AppSettings> {
     try { value = raw ? JSON.parse(raw) : defaults; }
     catch { /* Invalid saved preferences fall back without blocking Analytics. */ }
     snapshot = {
-      defaultAlertBefore: alertOptions.some(option => option.minutes === value?.defaultAlertBefore) ? value!.defaultAlertBefore! : 5,
       weekStartsOn: value?.weekStartsOn === 0 ? 0 : 1,
     };
     loaded = true; notify(); return snapshot;
@@ -40,7 +34,7 @@ export function getAppSettings(): Promise<AppSettings> {
 }
 export async function saveAppSettings(settings: AppSettings) {
   await getAppSettings();
-  if (!alertOptions.some(option => option.minutes === settings.defaultAlertBefore) || ![0, 1].includes(settings.weekStartsOn)) throw new Error("Invalid settings.");
+  if (![0, 1].includes(settings.weekStartsOn)) throw new Error("Invalid settings.");
   const raw = JSON.stringify(settings);
   if (Platform.OS === "web") localStorage.setItem(key, raw);
   else {

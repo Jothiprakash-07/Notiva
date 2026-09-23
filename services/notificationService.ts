@@ -1,4 +1,5 @@
 import * as Notifications from "expo-notifications";
+import { normalizeAlarmSound, type AlarmSound } from "./alarmSounds";
 import { nativeAlarm, NATIVE_ALARM_PREFIX, scheduleNativeAlarm } from "./nativeAlarm";
 import {
   Alert,
@@ -38,61 +39,25 @@ const MAIN_ALERT_CHANNEL_ID =
  * NOTIFICATION SETTINGS
  * ========================================================= */
 
-/*
- * These exports are kept for compatibility with existing
- * Profile / Settings UI.
- *
- * IMPORTANT:
- * repeatCount and repeatIntervalSeconds are no longer used
- * to create burst notifications.
- */
-
-export type NotificationRepeatCount =
-  | 1
-  | 3
-  | 5;
-
-export type NotificationRepeatInterval =
-  | 3
-  | 5
-  | 10;
-
 export type NotificationSettings = {
   preAlerts: boolean;
-  repeatCount: NotificationRepeatCount;
-  repeatIntervalSeconds: NotificationRepeatInterval;
   vibration: boolean;
+  alarmSound: AlarmSound;
 };
 
 export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings =
   {
     preAlerts: true,
-    repeatCount: 1,
-    repeatIntervalSeconds: 5,
     vibration: true,
+    alarmSound: "system",
   };
 
 function normalizeSettings(
   value: Partial<NotificationSettings> | null
 ): NotificationSettings {
   return {
+    alarmSound: normalizeAlarmSound(value?.alarmSound),
     preAlerts: typeof value?.preAlerts === "boolean" ? value.preAlerts : true,
-    repeatCount: [1, 3, 5].includes(
-      value?.repeatCount as number
-    )
-      ? value!.repeatCount!
-      : 1,
-
-    repeatIntervalSeconds: [
-      3,
-      5,
-      10,
-    ].includes(
-      value?.repeatIntervalSeconds as number
-    )
-      ? value!.repeatIntervalSeconds!
-      : 5,
-
     vibration:
       typeof value?.vibration === "boolean"
         ? value.vibration
@@ -100,35 +65,6 @@ function normalizeSettings(
   };
 }
 
-export const NOTIFICATION_REPEAT_OPTIONS = [
-  {
-    label: "1 Time",
-    value: 1,
-  },
-  {
-    label: "3 Times",
-    value: 3,
-  },
-  {
-    label: "5 Times",
-    value: 5,
-  },
-] as const;
-
-export const NOTIFICATION_INTERVAL_OPTIONS = [
-  {
-    label: "3 Seconds",
-    value: 3,
-  },
-  {
-    label: "5 Seconds",
-    value: 5,
-  },
-  {
-    label: "10 Seconds",
-    value: 10,
-  },
-] as const;
 
 /* =========================================================
  * FOREGROUND NOTIFICATION BEHAVIOR
@@ -1078,7 +1014,7 @@ async function scheduleOneTimeNotifications(
    */
 
   const mainAlertId = Platform.OS === "android"
-    ? await scheduleNativeAlarm(item, (await getNotificationSettings()).vibration, ids)
+    ? await scheduleNativeAlarm(item, await getNotificationSettings(), ids)
     : await scheduleDateNotification(
       createMainAlertContent(
         item
@@ -1374,7 +1310,7 @@ async function scheduleRecurringNotifications(
    */
 
   if (Platform.OS === "android") {
-    ids.push(await scheduleNativeAlarm(item, (await getNotificationSettings()).vibration, ids));
+    ids.push(await scheduleNativeAlarm(item, await getNotificationSettings(), ids));
     await verifyScheduledNotifications(ids);
     return ids;
   }
