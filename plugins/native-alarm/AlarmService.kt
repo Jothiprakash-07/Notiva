@@ -42,6 +42,13 @@ class AlarmService : Service() {
   private val alarms = linkedMapOf<String, JSONObject>()
 
   private val audio = AlarmAudio()
+  private val silenced = mutableSetOf<String>()
+  private var screenReceiverRegistered = false
+  private val screenReceiver = object : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+      if (intent.action == Intent.ACTION_SCREEN_OFF) silenceCurrentAlarm()
+    }
+  }
   private var vibrator: Vibrator? = null
   private var wakeLock: PowerManager.WakeLock? = null
 
@@ -64,6 +71,13 @@ class AlarmService : Service() {
 
     AlarmPreview.stop()
     instance = this
+    val filter = IntentFilter(Intent.ACTION_SCREEN_OFF)
+    if (Build.VERSION.SDK_INT >= 33) {
+      registerReceiver(screenReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+    } else {
+      registerReceiver(screenReceiver, filter)
+    }
+    screenReceiverRegistered = true
 
     /**
      * Android 8+ requires a notification channel.
@@ -331,8 +345,8 @@ class AlarmService : Service() {
     /**
      * Actual alarm sound + vibration start here.
      */
-    startRinging(
-      data.optString("alarmSound", "system"),
+    if (data.getString("id") !in silenced) startRinging(
+      AlarmStore.alarmSound(this, data),
       data.optBoolean(
         "vibration",
         true
@@ -386,6 +400,7 @@ class AlarmService : Service() {
     }
 
     // Single owned player; switching sound releases the previous player first.
+    android.util.Log.i("NotivaAlarm", "Playing alarm sound = $sound")
     audio.start(this, sound, true)
 
     /**
@@ -449,6 +464,7 @@ class AlarmService : Service() {
 
     val data =
       alarms[id] ?: return
+    silenceCurrentAlarm()
 
     val token =
       java.util.UUID
@@ -522,6 +538,13 @@ class AlarmService : Service() {
     }
   }
 
+  /** Silence leaves the alarm and its Done/Dismiss actions unresolved. */
+  fun silenceCurrentAlarm() {
+    current()?.getString("id")?.let { silenced.add(it) }
+    audio.stop()
+    vibrator?.cancel()
+  }
+
   /**
    * Fully releases alarm resources.
    */
@@ -544,6 +567,10 @@ class AlarmService : Service() {
   }
 
   override fun onDestroy() {
+    if (screenReceiverRegistered) {
+      unregisterReceiver(screenReceiver)
+      screenReceiverRegistered = false
+    }
 
     handler.removeCallbacksAndMessages(
       null

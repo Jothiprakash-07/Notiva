@@ -1,6 +1,6 @@
 import * as Notifications from "expo-notifications";
 import { normalizeAlarmSound, type AlarmSound } from "./alarmSounds";
-import { nativeAlarm, NATIVE_ALARM_PREFIX, scheduleNativeAlarm } from "./nativeAlarm";
+import { nativeAlarm, NATIVE_ALARM_PREFIX, scheduleNativeAlarm, syncNativeAlarmSound } from "./nativeAlarm";
 import {
   Alert,
   Linking,
@@ -185,7 +185,23 @@ export async function openExactAlarmSettings(): Promise<void> {
  * SETTINGS STORAGE
  * ========================================================= */
 
-export async function getNotificationSettings(): Promise<NotificationSettings> {
+// Serialize reads/mirroring and saves so a slow startup read cannot overwrite a new selection.
+let settingsOperations: Promise<unknown> = Promise.resolve();
+function settingsOperation<T>(action: () => Promise<T>): Promise<T> {
+  const result = settingsOperations.then(action);
+  settingsOperations = result.catch(() => undefined);
+  return result;
+}
+
+export function getNotificationSettings(): Promise<NotificationSettings> {
+  return settingsOperation(async () => {
+    const settings = await readNotificationSettings();
+    await syncNativeAlarmSound(settings.alarmSound);
+    return settings;
+  });
+}
+
+async function readNotificationSettings(): Promise<NotificationSettings> {
   try {
     if (
       Platform.OS ===
@@ -249,7 +265,11 @@ export async function getNotificationSettings(): Promise<NotificationSettings> {
   }
 }
 
-export async function saveNotificationSettings(
+export function saveNotificationSettings(settings: NotificationSettings): Promise<void> {
+  return settingsOperation(() => persistNotificationSettings(settings));
+}
+
+async function persistNotificationSettings(
   settings: NotificationSettings
 ): Promise<void> {
   const safeSettings =
@@ -293,6 +313,7 @@ export async function saveNotificationSettings(
     );
 
   file.write(raw);
+  await syncNativeAlarmSound(safeSettings.alarmSound);
 
   if (
     Platform.OS ===
@@ -721,7 +742,7 @@ export function notificationDateFor(
   item: ReminderItem
 ): Date {
   const minutes =
-    item.alertBefore?.minutes;
+    item.alertBefore?.minutes ?? 0;
 
   if (
     !Number.isFinite(
@@ -795,7 +816,7 @@ function createPreAlertContent(
   item: ReminderItem
 ): Notifications.NotificationContentInput {
   const minutes =
-    item.alertBefore.minutes;
+    item.alertBefore?.minutes ?? 0;
 
   const timeText =
     minutes === 1
@@ -871,11 +892,14 @@ function createMainAlertContent(
  * ONE-TIME SCHEDULING
  * ========================================================= */
 
+function scheduleDateNotification(content: Notifications.NotificationContentInput, date: Date, channelId: string): Promise<string>;
+function scheduleDateNotification(content: Notifications.NotificationContentInput, date: Date, channelId: string, skipExpired: true): Promise<string | undefined>;
 async function scheduleDateNotification(
   content: Notifications.NotificationContentInput,
   date: Date,
-  channelId: string
-): Promise<string> {
+  channelId: string,
+  skipExpired = false
+): Promise<string | undefined> {
   if (
     !Number.isFinite(
       date.getTime()
@@ -890,6 +914,7 @@ async function scheduleDateNotification(
     date.getTime() <=
     Date.now()
   ) {
+    if (skipExpired) return undefined;
     throw new Error(
       "Choose a future notification time."
     );
@@ -964,31 +989,20 @@ async function scheduleOneTimeNotifications(
    */
 
   if (
-    item.alertBefore.minutes >
+    (item.alertBefore?.minutes ?? 0) >
     0 && (await getNotificationSettings()).preAlerts
   ) {
-    if (
-      !Number.isFinite(
-        preAlertDate.getTime()
-      ) ||
-      preAlertDate.getTime() <=
-        Date.now()
-    ) {
-      throw new Error(
-        "Choose a future alert time."
-      );
-    }
-
     const preAlertId =
       await scheduleDateNotification(
         createPreAlertContent(
           item
         ),
         preAlertDate,
-        PRE_ALERT_CHANNEL_ID
+        PRE_ALERT_CHANNEL_ID,
+        true
       );
 
-    ids.push(
+    if (preAlertId) ids.push(
       preAlertId
     );
 
@@ -1247,7 +1261,7 @@ async function scheduleRecurringNotifications(
    */
 
   if (
-    item.alertBefore.minutes >
+    (item.alertBefore?.minutes ?? 0) >
     0 && (await getNotificationSettings()).preAlerts
   ) {
     const preTriggers =
@@ -1267,11 +1281,11 @@ async function scheduleRecurringNotifications(
         );
 
       if (
-        nextDate === null
+        nextDate === null || nextDate <= Date.now()
       ) {
-        throw new Error(
-          "Could not calculate recurring pre-alert."
-        );
+        // Recurring calendar triggers normally roll past occurrences forward.
+        // An expired/unavailable pre-alert must never block the main alarm.
+        continue;
       }
 
       const id =

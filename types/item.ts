@@ -41,11 +41,11 @@ export type ReminderItem = {
 
   description: string;
 
-  category: string;
+  category?: string | null;
 
   repeat: RepeatType;
 
-  priority?: Priority;
+  priority?: Priority | null;
 
   startAt: string;
 
@@ -63,7 +63,7 @@ export type ReminderItem = {
    */
   completionNote?: string;
 
-  alertBefore: AlertBefore;
+  alertBefore?: AlertBefore | null;
 
   status?: ItemStatus;
 

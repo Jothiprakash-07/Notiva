@@ -26,12 +26,18 @@ import {
 
 import { StatusBar } from "expo-status-bar";
 
-import { AuthProvider } from "@/contexts/AuthContext";
+import { AuthProvider, useAuth } from "@/contexts/AuthContext";
+import { getNotificationSettings } from "../services/notificationService";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 
 import { consumeNotificationResponse, notificationResponseKey } from "../services/notificationResponse";
 
 export default function RootLayout() {
+  return <AuthProvider><RootNavigation /></AuthProvider>;
+}
+
+function RootNavigation() {
+  const { session, isLoading } = useAuth();
   const colorScheme =
     useColorScheme();
 
@@ -39,6 +45,10 @@ export default function RootLayout() {
   const [pending, setPending] = useState<{ itemId: string; responseKey: string }>();
   const responseSequence = useRef(0);
   const received = useRef(new Set<string>());
+
+  useEffect(() => {
+    void getNotificationSettings().catch(error => console.warn("Could not sync alarm sound:", error));
+  }, []);
 
   useEffect(() => {
     if (Platform.OS === "web") return;
@@ -81,7 +91,7 @@ export default function RootLayout() {
   }, []);
 
   useEffect(() => {
-    if (!navigation?.key || !pending) return;
+    if (!navigation?.key || !pending || !session || isLoading) return;
     router.replace({
       pathname: "/(tabs)",
       params: {
@@ -90,10 +100,11 @@ export default function RootLayout() {
       },
     });
     setPending(undefined);
-  }, [navigation?.key, pending]);
+  }, [navigation?.key, pending, session, isLoading]);
+
+  if (isLoading) return null;
 
   return (
-    <AuthProvider>
       <ThemeProvider
         value={
           colorScheme ===
@@ -115,6 +126,7 @@ export default function RootLayout() {
             }}
           />
 
+          <Stack.Protected guard={!!session}>
           <Stack.Screen
             name="(tabs)"
             options={{
@@ -122,6 +134,16 @@ export default function RootLayout() {
                 false,
             }}
           />
+          <Stack.Screen name="screens/home/HomeScreen" />
+          <Stack.Screen name="screens/reminder/NewReminderScreen" />
+          <Stack.Screen name="screens/details/[id]" />
+          <Stack.Screen name="screens/create/[type]" />
+          <Stack.Screen name="screens/profile/AppSettingsScreen" />
+          <Stack.Screen name="screens/profile/ChangePasswordScreen" />
+          <Stack.Screen name="screens/profile/EditProfileScreen" />
+          <Stack.Screen name="screens/profile/JoinOrganizationScreen" />
+          <Stack.Screen name="screens/profile/NotificationSettingsScreen" />
+          <Stack.Screen name="screens/profile/OrganizationScreen" />
 
           <Stack.Screen
             name="modal"
@@ -133,13 +155,13 @@ export default function RootLayout() {
                 "Modal",
             }}
           />
+          </Stack.Protected>
         </Stack>
 
         <StatusBar
           style="auto"
         />
-        <NativeAlarmCompletion />
+        {session && <NativeAlarmCompletion />}
       </ThemeProvider>
-    </AuthProvider>
   );
 }

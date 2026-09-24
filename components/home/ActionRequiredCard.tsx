@@ -7,11 +7,11 @@ import ReminderCard from "./ReminderCard";
 
 type Props = {
   id: string;
-  priority?: Priority;
+  priority?: Priority | null;
   title: string;
   time: string;
   date: string;
-  category: string;
+  category?: string | null;
   status: ItemStatus;
   type: ItemType;
   onPress: () => void;

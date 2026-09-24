@@ -7,12 +7,14 @@
     "icon": "./assets/images/notiva-logo.png",
     "scheme": "reminder54",
     "userInterfaceStyle": "automatic",
+
     "ios": {
       "supportsTablet": true
     },
+
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#4d3fe6",
+        "backgroundColor": "#4D3FE6",
         "foregroundImage": "./assets/images/notiva-logo.png",
         "backgroundImage": "./assets/images/notiva-logo.png",
         "monochromeImage": "./assets/images/notiva-logo.png"
@@ -23,38 +25,101 @@
         "android.permission.SCHEDULE_EXACT_ALARM"
       ]
     },
+
     "web": {
       "output": "static",
       "favicon": "./assets/images/notiva-logo.png"
     },
+
     "plugins": [
       "expo-router",
+
       [
         "expo-splash-screen",
         {
           "image": "./assets/images/notiva-logo.png",
           "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#4d3fe6",
+          "backgroundColor": "#4D3FE6",
           "dark": {
-            "backgroundColor": "#4d3fe6"
+            "backgroundColor": "#4D3FE6"
           }
         }
       ],
-      "@react-native-community/datetimepicker",
+
+      [
+        "@react-native-community/datetimepicker",
+        {
+          "android": {
+            "datePicker": {
+              "colorAccent": {
+                "light": "#4D3FE6",
+                "dark": "#4D3FE6"
+              },
+              "colorControlActivated": {
+                "light": "#4D3FE6",
+                "dark": "#4D3FE6"
+              },
+              "colorControlHighlight": {
+                "light": "#EFEDFF",
+                "dark": "#EFEDFF"
+              },
+              "textColorPrimary": {
+                "light": "#171329",
+                "dark": "#171329"
+              },
+              "textColorSecondary": {
+                "light": "#797487",
+                "dark": "#797487"
+              },
+              "windowBackground": {
+                "light": "#FFFFFF",
+                "dark": "#FFFFFF"
+              }
+            },
+
+            "timePicker": {
+              "background": {
+                "light": "#FFFFFF",
+                "dark": "#FFFFFF"
+              },
+              "headerBackground": {
+                "light": "#4D3FE6",
+                "dark": "#4D3FE6"
+              },
+              "numbersBackgroundColor": {
+                "light": "#F7F7FC",
+                "dark": "#F7F7FC"
+              },
+              "numbersSelectorColor": {
+                "light": "#4D3FE6",
+                "dark": "#4D3FE6"
+              },
+              "numbersTextColor": {
+                "light": "#171329",
+                "dark": "#171329"
+              }
+            }
+          }
+        }
+      ],
+
       [
         "expo-notifications",
         {
-          "color": "#4d3fe6"
+          "color": "#4D3FE6"
         }
       ],
+
       "expo-secure-store",
       "./plugins/withNativeAlarm"
     ],
+
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
     },
+
     "extra": {
       "router": {},
       "eas": {

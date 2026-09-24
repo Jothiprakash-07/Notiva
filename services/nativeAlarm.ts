@@ -3,6 +3,7 @@ import type { ReminderItem } from '../types/item';
 import { normalizeAlarmSound, type AlarmSound } from './alarmSounds';
 
 type AlarmBridge = {
+  setAlarmSound(sound: AlarmSound): Promise<void>;
   schedule(json: string): Promise<string>;
   cancel(id: string): Promise<void>;
   canSchedule(): Promise<boolean>;
@@ -15,6 +16,12 @@ type AlarmBridge = {
   stopPreview(): Promise<void>;
 };
 export const NATIVE_ALARM_PREFIX = 'native-alarm:';
+export async function syncNativeAlarmSound(sound: AlarmSound): Promise<void> {
+  if (Platform.OS !== 'android') return;
+  const bridge = nativeAlarm();
+  if (!bridge.setAlarmSound) throw new Error('Install the new Android build to save the alarm sound.');
+  await bridge.setAlarmSound(normalizeAlarmSound(sound));
+}
 export function nativeAlarm(): AlarmBridge {
   const bridge = NativeModules.NotivaAlarm as AlarmBridge | undefined;
   if (!bridge) throw new Error('Native alarms require a rebuilt Android app. Expo Go is not supported.');

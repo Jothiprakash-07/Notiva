@@ -10,6 +10,7 @@ function harness(os, files = new Map()) {
   const cache = new Map(), alarms = new Map(), notifications = new Map();
   let sequence = 0;
   const bridge = {
+    setAlarmSound: async sound => { bridge.selectedSound = sound; },
     canSchedule: async () => true,
     canFullScreen: async () => true,
     schedule: async raw => { const item = JSON.parse(raw); alarms.set(item.id, item); return item.id; },
@@ -50,10 +51,22 @@ function harness(os, files = new Map()) {
     });
     return module.exports;
   }
-  return { load, files, alarms, notifications };
+  return { load, files, alarms, notifications, bridge };
 }
 
 (async () => {
+  const soundHarness = harness('android');
+  const soundService = soundHarness.load('services/notificationService.ts');
+  await soundService.saveNotificationSettings({ preAlerts: true, vibration: true, alarmSound: 'positive_vibe' });
+  await soundService.scheduleItemNotifications({ id: 'old', type: 'reminder', title: 'Scheduled before change', repeat: 'none', startAt: new Date(Date.now() + 3600000).toISOString(), alertBefore: { minutes: 5 } }, true);
+  await Promise.all([soundService.getNotificationSettings(), soundService.saveNotificationSettings({ preAlerts: true, vibration: true, alarmSound: 'robotic_loop' })]);
+  assert.equal(soundHarness.bridge.selectedSound, 'robotic_loop');
+  assert.equal([...soundHarness.alarms.values()][0].alarmSound, 'positive_vibe', 'old payload remains scheduled; native preference overrides it at fire time');
+  const restartedSound = harness('android', soundHarness.files);
+  assert.equal((await restartedSound.load('services/notificationService.ts').getNotificationSettings()).alarmSound, 'robotic_loop');
+  assert.equal(restartedSound.bridge.selectedSound, 'robotic_loop');
+  assert.equal([...soundHarness.notifications.values()][0].content.sound, 'default');
+  console.log('PASS latest sound mirrors independently of old payloads, serialized startup/save, restart and unchanged pre-alert sound');
   for (const os of ['web', 'android', 'ios']) {
     const h = harness(os);
     const settings = h.load('services/appSettings.ts');

@@ -39,7 +39,7 @@ export default function Index() {
       return;
     }
 
-    setScreen("onboarding");
+    setScreen("login");
   }, [
     splashFinished,
     isLoading,

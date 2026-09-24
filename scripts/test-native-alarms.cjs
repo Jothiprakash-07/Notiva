@@ -8,9 +8,11 @@ const ts = require('typescript');
 const root = path.resolve(__dirname, '..');
 function harness(os = 'android') {
   const cache = new Map(), files = new Map(), expo = new Map(), alarms = new Map();
-  const cancelled = [];
+  const cancelled = [], popups = [];
+  let nextTrigger = () => Date.now() + 100000;
   let counter = 0, exact = true, fail = false;
   const bridge = {
+    setAlarmSound: async () => {},
     canSchedule: async () => exact, canFullScreen: async () => true,
     schedule: async raw => { if (fail) throw Error('native failure'); const data = JSON.parse(raw); alarms.set(data.id, data); return data.id; },
     cancel: async id => { cancelled.push(id); alarms.delete(id); },
@@ -24,12 +26,12 @@ function harness(os = 'android') {
     setNotificationChannelAsync: async () => {},
     scheduleNotificationAsync: async request => { const id = `expo-${++counter}`; expo.set(id, { ...request, identifier: id }); return id; },
     getAllScheduledNotificationsAsync: async () => [...expo.values()],
-    getNextTriggerDateAsync: async () => Date.now() + 100000,
+    getNextTriggerDateAsync: async () => nextTrigger(),
     cancelScheduledNotificationAsync: async id => { cancelled.push(id); expo.delete(id); },
     getLastNotificationResponseAsync: async () => null,
   };
   const mocks = {
-    'react-native': { Platform: { OS: os, Version: 36 }, NativeModules: { NotivaAlarm: bridge }, Alert: { alert() {} }, Linking: {} },
+    'react-native': { Platform: { OS: os, Version: 36 }, NativeModules: { NotivaAlarm: bridge }, Alert: { alert: (...args) => popups.push(args) }, Linking: {} },
     'expo-notifications': notifications,
     'expo-file-system': { Paths: { document: 'docs' }, File: class {
       constructor(dir, name) { this.key = dir + '/' + name; }
@@ -49,7 +51,7 @@ function harness(os = 'android') {
     }, { filename: file });
     return module.exports;
   }
-  return { load, expo, alarms, cancelled, setExact: value => { exact = value; }, setFail: value => { fail = value; } };
+  return { load, expo, alarms, cancelled, popups, setNextTrigger: value => { nextTrigger = value; }, setExact: value => { exact = value; }, setFail: value => { fail = value; } };
 }
 const makeItem = (overrides = {}) => ({
   id: 'reminder', type: 'reminder', title: 'Read', description: '', category: 'Personal', repeat: 'none',
@@ -57,6 +59,37 @@ const makeItem = (overrides = {}) => ({
   notificationIds: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), ...overrides,
 });
 (async () => {
+  for (const os of ['android', 'ios']) {
+    for (const alertBefore of [undefined, null, { minutes: 0 }, { minutes: 5 }]) {
+      const h = harness(os);
+      const item = makeItem({ startAt: new Date(Date.now() + 4 * 60000).toISOString(), category: null, priority: null, alertBefore });
+      const ids = await h.load('services/notificationService.ts').scheduleItemNotifications(item);
+      assert.equal(ids.length, 1, 'future main alarm survives absent or expired pre-alert');
+      assert.equal(h.popups.length, 0);
+      assert.equal(os === 'android' ? h.alarms.size : h.expo.size, 1);
+      await h.load('services/itemStorage.ts').saveItem({ ...item, notificationIds: ids });
+      await h.load('services/itemStorage.ts').rescheduleItem({ ...item, startAt: new Date(Date.now() + 3 * 60000).toISOString() });
+      assert.equal(h.popups.length, 0, 'rescheduling ignores expired pre-alerts too');
+      assert.equal((await h.load('services/itemStorage.ts').getItemById(item.id)).category, null);
+    }
+  }
+  const future = harness();
+  const futureItem = makeItem({ startAt: new Date(Date.now() + 10 * 60000).toISOString() });
+  await future.load('services/notificationService.ts').scheduleItemNotifications(futureItem, true);
+  assert.equal(future.expo.size, 1); assert.equal(future.alarms.size, 1);
+  assert.equal([...future.expo.values()][0].trigger.date.getTime(), new Date(futureItem.startAt).getTime() - 5 * 60000);
+  for (const repeat of ['daily', 'weekly', 'weekdays', 'monthly', 'yearly']) {
+    for (const expired of [false, true]) {
+      const h = harness();
+      if (expired) h.setNextTrigger(() => Date.now() - 60000);
+      await h.load('services/notificationService.ts').scheduleItemNotifications(makeItem({ repeat, startAt: new Date(Date.now() + 4 * 60000).toISOString() }));
+      assert.equal(h.alarms.size, 1); assert.equal(h.popups.length, 0);
+      assert.equal(h.expo.size, expired ? 0 : repeat === 'weekdays' ? 5 : 1);
+    }
+  }
+  const pastMain = harness();
+  await assert.rejects(pastMain.load('services/notificationService.ts').scheduleItemNotifications(makeItem({ startAt: new Date(Date.now() - 1000).toISOString() }), true), /future reminder/);
+  console.log('PASS absent/expired pre-alerts, reschedule, future pre-alert, recurring skip and past-main validation');
   const h = harness(), service = h.load('services/notificationService.ts'), storage = h.load('services/itemStorage.ts');
   await service.saveNotificationSettings({ repeatCount: 5, repeatIntervalSeconds: 3, vibration: false });
   const tenPM = new Date(); tenPM.setDate(tenPM.getDate() + 1); tenPM.setHours(22, 0, 0, 0);

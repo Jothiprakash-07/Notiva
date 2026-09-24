@@ -1,5 +1,6 @@
 import { formatDate, formatTime } from "../../../utils/dateFormat";
 import { priorityColors } from "../../../constants/itemColors";
+import { ITEM_CATEGORIES as categories } from "../../../constants/itemCategories";
 import {
   getItemStatus,
   isItemReadOnly,
@@ -48,18 +49,8 @@ import {
   RepeatType,
 } from "../../../types/item";
 
-const categories = [
-  "Work",
-  "Health",
-  "Finance",
-  "Personal",
-  "Home",
-  "Meeting",
-  "Other",
-];
-
 const alerts: AlertBefore[] = [
-  { label: "At Time", minutes: 0 },
+  { label: "None", minutes: 0 },
   { label: "5 Minutes Before", minutes: 5 },
   { label: "10 Minutes Before", minutes: 10 },
   { label: "15 Minutes Before", minutes: 15 },
@@ -69,7 +60,7 @@ const alerts: AlertBefore[] = [
 ];
 
 const birthdayAlerts: AlertBefore[] = [
-  { label: "Same Day", minutes: 0 },
+  { label: "None", minutes: 0 },
   { label: "1 Day Before", minutes: 1440 },
   { label: "2 Days Before", minutes: 2880 },
   { label: "1 Week Before", minutes: 10080 },
@@ -138,10 +129,13 @@ export default function CreateItemScreen() {
   const [description, setDescription] = useState("");
 
   const [category, setCategory] =
-    useState("Personal");
+    useState<string>();
 
   const [priority, setPriority] =
-    useState<Priority>("Medium");
+    useState<Priority>();
+  const [priorityExpanded, setPriorityExpanded] = useState(false);
+  const [categoryExpanded, setCategoryExpanded] = useState(false);
+  const [alertExpanded, setAlertExpanded] = useState(false);
 
   const [date, setDate] =
     useState(new Date());
@@ -160,20 +154,10 @@ export default function CreateItemScreen() {
     );
 
   const [repeat, setRepeat] =
-    useState<RepeatType>(
-      type === "birthday"
-        ? "yearly"
-        : "none"
-    );
+    useState<RepeatType>("none");
 
   const [alertBefore, setAlertBefore] =
-    useState<AlertBefore>(
-      (
-        type === "birthday"
-          ? birthdayAlerts
-          : alerts
-      )[1]
-    );
+    useState<AlertBefore>();
 
   const [allDay, setAllDay] =
     useState(
@@ -252,20 +236,18 @@ export default function CreateItemScreen() {
         setDescription(
           item.description
         );
-        setCategory(item.category);
-
-        if (item.priority) {
-          setPriority(
-            item.priority
-          );
-        }
+        setCategory(item.category || undefined);
+        setPriority(item.priority || undefined);
+        setCategoryExpanded(Boolean(item.category));
+        setPriorityExpanded(Boolean(item.priority));
+        setAlertExpanded(Boolean(item.alertBefore?.minutes));
 
         setDate(start);
         setTime(start);
 
-        setRepeat(item.repeat);
+        setRepeat(item.repeat || "none");
         setAlertBefore(
-          item.alertBefore
+          item.alertBefore || undefined
         );
 
         setAllDay(
@@ -436,15 +418,8 @@ export default function CreateItemScreen() {
           description:
             description.trim(),
 
-          category:
-            type === "birthday"
-              ? "Birthday"
-              : category,
-
-          repeat:
-            type === "birthday"
-              ? "yearly"
-              : repeat,
+          category,
+          repeat,
 
           priority:
             type === "birthday" ||
@@ -1214,363 +1189,45 @@ export default function CreateItemScreen() {
         </View>
 
         {/* Priority */}
-        {type !== "birthday" &&
-        type !== "event" ? (
-          <View
-            style={
-              styles.sectionCard
-            }
-          >
-            <View
-              style={
-                styles.sectionHeader
-              }
-            >
-              <View
-                style={
-                  styles.sectionIcon
-                }
-              >
-                <Ionicons
-                  name="flag-outline"
-                  size={19}
-                  color="#4d3fe6"
-                />
-              </View>
-
-              <Text
-                style={
-                  styles.cardHeading
-                }
-              >
-                Priority
-              </Text>
-            </View>
-
-            <View
-              style={
-                styles.chips
-              }
-            >
-              {(
-                [
-                  "High",
-                  "Medium",
-                  "Low",
-                ] as Priority[]
-              ).map(
-                (value) => {
-                  const selected =
-                    priority ===
-                    value;
-
-                  return (
-                    <Pressable
-                      key={value}
-                      accessibilityRole="radio"
-                      accessibilityState={{
-                        checked:
-                          selected,
-                      }}
-                      style={[
-                        styles.chip,
-
-                        {
-                          backgroundColor:
-                            priorityColors[
-                              value
-                            ]
-                              .backgroundColor,
-
-                          borderColor:
-                            selected
-                              ? priorityColors[
-                                  value
-                                ]
-                                  .color
-                              : "transparent",
-
-                          borderWidth:
-                            2,
-                        },
-                      ]}
-                      onPress={() =>
-                        setPriority(
-                          value
-                        )
-                      }
-                    >
-                      <Text
-                        style={[
-                          styles.chipText,
-
-                          {
-                            color:
-                              priorityColors[
-                                value
-                              ]
-                                .color,
-                          },
-                        ]}
-                      >
-                        {value}
-                      </Text>
-                    </Pressable>
-                  );
-                }
-              )}
-            </View>
-          </View>
-        ) : null}
+        {type !== "birthday" && type !== "event" && <View style={styles.sectionCard}>
+          <Text style={[styles.cardHeading, styles.optionHeading]}>Priority</Text>
+          {!priorityExpanded ? <Pressable accessibilityRole="button" style={styles.chip} onPress={() => setPriorityExpanded(true)}><Text style={styles.chipText}>Add Priority</Text></Pressable> :
+            <View style={styles.chips}>
+              <Pressable accessibilityRole="radio" accessibilityState={{ checked: !priority }} style={[styles.chip, !priority && styles.active]} onPress={() => { setPriority(undefined); setPriorityExpanded(false); }}><Text style={!priority ? styles.activeText : styles.chipText}>None</Text></Pressable>
+              {(["Low", "Medium", "High"] as Priority[]).map(value => <Pressable key={value} accessibilityRole="radio" accessibilityState={{ checked: priority === value }} onPress={() => setPriority(value)} style={[styles.chip, priority === value && { backgroundColor: priorityColors[value].backgroundColor, borderColor: priorityColors[value].color }]}><Text style={[styles.chipText, priority === value && { color: priorityColors[value].color }]}>{value}</Text></Pressable>)}
+            </View>}
+        </View>}
 
         {/* Repeat */}
-        <View
-          style={
-            styles.sectionCard
-          }
-        >
-          <View
-            style={
-              styles.sectionHeader
-            }
-          >
-            <View
-              style={
-                styles.sectionIcon
-              }
-            >
-              <Ionicons
-                name="repeat-outline"
-                size={19}
-                color="#4d3fe6"
-              />
-            </View>
-
-            <Text
-              style={
-                styles.cardHeading
-              }
-            >
-              Repeat
-            </Text>
+        <View style={styles.sectionCard}>
+          <Text style={[styles.cardHeading, styles.optionHeading]}>Repeat</Text>
+          <View style={styles.chips}>
+            {repeatOptions.map(option => <Pressable key={option.value} accessibilityRole="radio" accessibilityState={{ checked: repeat === option.value }} style={[styles.chip, repeat === option.value && styles.active]} onPress={() => setRepeat(option.value)}><Text style={repeat === option.value ? styles.activeText : styles.chipText}>{option.label}</Text></Pressable>)}
           </View>
-
-          {type !== "birthday" ? (
-            <View
-              style={
-                styles.chips
-              }
-            >
-              {repeatOptions.map(
-                (value) => {
-                  const active =
-                    repeat ===
-                    value.value;
-
-                  return (
-                    <Pressable
-                      key={
-                        value.value
-                      }
-                      style={[
-                        styles.chip,
-                        active &&
-                          styles.active,
-                      ]}
-                      onPress={() =>
-                        setRepeat(
-                          value.value
-                        )
-                      }
-                    >
-                      <Text
-                        style={
-                          active
-                            ? styles.activeText
-                            : styles.chipText
-                        }
-                      >
-                        {value.label}
-                      </Text>
-                    </Pressable>
-                  );
-                }
-              )}
-            </View>
-          ) : (
-            <View
-              style={
-                styles.helperBox
-              }
-            >
-              <Ionicons
-                name="information-circle-outline"
-                size={18}
-                color="#4d3fe6"
-              />
-
-              <Text
-                style={
-                  styles.helper
-                }
-              >
-                Birthday repeats yearly automatically.
-              </Text>
-            </View>
-          )}
         </View>
 
         {/* Alert */}
-        <View
-          style={
-            styles.sectionCard
-          }
-        >
-          <View
-            style={
-              styles.sectionHeader
-            }
-          >
-            <View
-              style={
-                styles.sectionIcon
-              }
-            >
-              <Ionicons
-                name="notifications-outline"
-                size={19}
-                color="#4d3fe6"
-              />
-            </View>
-
-            <Text
-              style={
-                styles.cardHeading
-              }
-            >
-              Alert Before
-            </Text>
-          </View>
-
-          <View
-            style={
-              styles.chips
-            }
-          >
-            {shownAlerts.map(
-              (value) => {
-                const active =
-                  alertBefore.label ===
-                  value.label;
-
-                return (
-                  <Pressable
-                    key={
-                      value.label
-                    }
-                    style={[
-                      styles.chip,
-
-                      active &&
-                        styles.active,
-                    ]}
-                    onPress={() => {
-                      setAlertBefore(
-                        value
-                      );
-                    }}
-                  >
-                    <Text
-                      style={
-                        active
-                          ? styles.activeText
-                          : styles.chipText
-                      }
-                    >
-                      {value.label}
-                    </Text>
-                  </Pressable>
-                );
-              }
-            )}
-          </View>
+        <View style={styles.sectionCard}>
+          <Text style={[styles.cardHeading, styles.optionHeading]}>Alert Before</Text>
+          {!alertExpanded ? <Pressable accessibilityRole="button" style={styles.chip} onPress={() => setAlertExpanded(true)}><Text style={styles.chipText}>Add Alert</Text></Pressable> :
+            <View style={styles.chips}>
+              {shownAlerts.map(value => {
+                const selected = (alertBefore?.minutes ?? 0) === value.minutes;
+                return <Pressable key={value.minutes} accessibilityRole="radio" accessibilityState={{ checked: selected }} style={[styles.chip, selected && styles.active]} onPress={() => { setAlertBefore(value.minutes ? value : undefined); if (!value.minutes) setAlertExpanded(false); }}><Text style={selected ? styles.activeText : styles.chipText}>{value.label}</Text></Pressable>;
+              })}
+            </View>}
+          <Text style={styles.helper}>Optional advance notification. The main alarm still rings at the selected time.</Text>
         </View>
 
         {/* Category */}
-        {type !== "birthday" ? (
-          <View
-            style={
-              styles.sectionCard
-            }
-          >
-            <View
-              style={
-                styles.sectionHeader
-              }
-            >
-              <View
-                style={
-                  styles.sectionIcon
-                }
-              >
-                <Ionicons
-                  name="folder-open-outline"
-                  size={19}
-                  color="#4d3fe6"
-                />
-              </View>
-
-              <Text
-                style={
-                  styles.cardHeading
-                }
-              >
-                Category
-              </Text>
-            </View>
-
-            <View
-              style={
-                styles.chips
-              }
-            >
-              {categories.map(
-                (value) => {
-                  const active =
-                    category ===
-                    value;
-
-                  return (
-                    <Pressable
-                      key={value}
-                      style={[
-                        styles.chip,
-
-                        active &&
-                          styles.active,
-                      ]}
-                      onPress={() =>
-                        setCategory(
-                          value
-                        )
-                      }
-                    >
-                      <Text
-                        style={
-                          active
-                            ? styles.activeText
-                            : styles.chipText
-                        }
-                      >
-                        {value}
-                      </Text>
-                    </Pressable>
-                  );
-                }
-              )}
-            </View>
-          </View>
-        ) : null}
+        <View style={styles.sectionCard}>
+          <Text style={[styles.cardHeading, styles.optionHeading]}>Category</Text>
+          {!categoryExpanded ? <Pressable accessibilityRole="button" style={styles.chip} onPress={() => setCategoryExpanded(true)}><Text style={styles.chipText}>Add Category</Text></Pressable> :
+            <View style={styles.chips}>
+              <Pressable accessibilityRole="radio" accessibilityState={{ checked: !category }} style={[styles.chip, !category && styles.active]} onPress={() => { setCategory(undefined); setCategoryExpanded(false); }}><Text style={!category ? styles.activeText : styles.chipText}>None</Text></Pressable>
+              {Array.from(new Set<string>([...categories, ...(category ? [category] : [])])).map(value => <Pressable key={value} accessibilityRole="radio" accessibilityState={{ checked: category === value }} style={[styles.chip, category === value && styles.active]} onPress={() => setCategory(value)}><Text style={category === value ? styles.activeText : styles.chipText}>{value}</Text></Pressable>)}
+            </View>}
+        </View>
 
         {/* Save */}
         <Pressable
@@ -1622,6 +1279,10 @@ export default function CreateItemScreen() {
 
       {picker ? (
         <DateTimePicker
+          accentColor="#4D3FE6"
+          textColor="#171329"
+          positiveButton={{ label: "OK", textColor: "#4D3FE6" }}
+          negativeButton={{ label: "Cancel", textColor: "#4D3FE6" }}
           value={
             picker === "date"
               ? date
@@ -1728,7 +1389,8 @@ const styles =
       backgroundColor:
         "#ffffff",
       borderRadius: 18,
-      padding: 18,
+      paddingHorizontal: 18,
+      paddingVertical: 21,
       marginBottom: 14,
       borderWidth: 1,
       borderColor:
@@ -1763,6 +1425,8 @@ const styles =
       justifyContent:
         "center",
     },
+
+    optionHeading: { marginBottom: 13 },
 
     cardHeading: {
       fontSize: 16,
@@ -1898,7 +1562,7 @@ const styles =
     chips: {
       flexDirection: "row",
       flexWrap: "wrap",
-      gap: 9,
+      gap: 11,
       width: "100%",
     },
 

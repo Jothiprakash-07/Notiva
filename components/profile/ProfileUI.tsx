@@ -23,9 +23,9 @@ export function ProfilePage({ title, subtitle, children, back = true }: PropsWit
 export function Section({ title, children }: PropsWithChildren<{ title: string }>) {
   return <View style={ui.section}><Text style={ui.sectionLabel}>{title}</Text><View style={ui.card}>{children}</View></View>;
 }
-export function MenuRow({ icon, title, description, onPress, disabled = false, purpleOutline = false }: { icon: keyof typeof Ionicons.glyphMap; title: string; description?: string; onPress?: () => void; disabled?: boolean; purpleOutline?: boolean }) {
-  const content = <><View style={ui.icon}><Ionicons name={icon} size={21} color={purple} /></View><View style={ui.flex}><Text style={[ui.rowTitle, purpleOutline && { color: purple }]}>{title}</Text>{description ? <Text style={ui.subtitle}>{description}</Text> : null}</View>{onPress && <Ionicons name="chevron-forward" size={17} color={purpleOutline ? purple : "#928BA4"} />}</>;
-  return onPress ? <Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={({ pressed }) => [ui.row, purpleOutline && { outlineColor: purple, outlineWidth: 1 }, pressed && ui.pressed, disabled && ui.disabled]}>{content}</Pressable> : <View style={ui.row}>{content}</View>;
+export function MenuRow({ icon, title, description, onPress, disabled = false, softAccent = false }: { icon: keyof typeof Ionicons.glyphMap; title: string; description?: string; onPress?: () => void; disabled?: boolean; softAccent?: boolean }) {
+  const content = <><View style={ui.icon}><Ionicons name={icon} size={21} color={purple} /></View><View style={ui.flex}><Text style={[ui.rowTitle, softAccent && { color: purple }]}>{title}</Text>{description ? <Text style={ui.subtitle}>{description}</Text> : null}</View>{onPress && <Ionicons name="chevron-forward" size={17} color={softAccent ? purple : "#928BA4"} />}</>;
+  return onPress ? <Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={({ pressed }) => [ui.row, softAccent && ui.softAccentRow, pressed && ui.pressed, disabled && ui.disabled]}>{content}</Pressable> : <View style={ui.row}>{content}</View>;
 }
 export function Action({ label, onPress, busy = false, disabled = false, destructive = false, secondary = false }: { label: string; onPress: () => void; busy?: boolean; disabled?: boolean; destructive?: boolean; secondary?: boolean }) {
   return <Pressable accessibilityRole="button" accessibilityState={{ disabled: disabled || busy, busy }} disabled={disabled || busy} onPress={onPress} style={({ pressed }) => [ui.button, secondary && { backgroundColor: "#F0EDFF", outlineColor: purple, outlineWidth: 1 }, destructive && ui.destructive, pressed && ui.pressed, (disabled || busy) && ui.disabled]}>
@@ -59,6 +59,7 @@ export const ui = StyleSheet.create({
   section: { gap: 10 }, sectionLabel: { fontSize: 11, letterSpacing: 1.2, fontWeight: "800", color: "#898297", textTransform: "uppercase", marginLeft: 4 },
   card: { padding: 18, gap: 14, borderRadius: 22, backgroundColor: "white", elevation: 2, shadowColor: "#342965", shadowOpacity: 0.04, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
   heading: { fontSize: 18, fontWeight: "800", color: "#171329" }, row: { flexDirection: "row", alignItems: "center", gap: 12, minHeight: 58, paddingVertical: 6 },
+  softAccentRow: { backgroundColor: "#F7F5FF", borderRadius: 18, borderWidth: 0, padding: 12 },
   rowTitle: { fontSize: 14, fontWeight: "700", color: "#302A40" }, icon: { width: 40, height: 40, borderRadius: 13, backgroundColor: "#F0EDFF", alignItems: "center", justifyContent: "center" },
   back: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
   pressed: { opacity: 0.75, transform: [{ scale: 0.99 }] }, disabled: { opacity: 0.5 },

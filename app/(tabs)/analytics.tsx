@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   AppState,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -16,9 +17,11 @@ import Svg, { Circle } from "react-native-svg";
 import { getItems } from "../../services/itemStorage";
 import { getAppSettings, useAppSettings } from "../../services/appSettings";
 import type { ItemType, ReminderItem } from "../../types/item";
+import { ITEM_CATEGORIES } from "../../constants/itemCategories";
 import {
   calculateAnalytics,
   type AnalyticsPeriod,
+  type AnalyticsFilters,
 } from "../../utils/itemAnalytics";
 
 const PURPLE = "#4D3FE6";
@@ -74,6 +77,8 @@ export default function AnalyticsScreen() {
   const appSettings = useAppSettings();
   const [items, setItems] = useState<ReminderItem[]>([]);
   const [period, setPeriod] = useState<AnalyticsPeriod>("week");
+  const [category, setCategory] = useState("all");
+  const [itemType, setItemType] = useState<ItemType | "all">("all");
   const [now, setNow] = useState(() => new Date());
 
   const [loading, setLoading] = useState(true);
@@ -134,9 +139,22 @@ export default function AnalyticsScreen() {
     }, [revision]),
   );
 
+  const categoryOptions = useMemo(() => [
+    { value: "all", label: "All" },
+    ...Array.from(new Set<string>([...ITEM_CATEGORIES, ...items.map(item => item.category?.trim() || "").filter(Boolean)]))
+      .map(value => ({ value: `value:${value}`, label: value })),
+    { value: "uncategorized", label: "Uncategorized" },
+  ], [items]);
   const analytics = useMemo(
-    () => calculateAnalytics(items, period, now, appSettings.weekStartsOn),
-    [items, period, now, appSettings.weekStartsOn],
+    () => {
+      const filters: AnalyticsFilters = {
+        type: itemType === "all" ? undefined : itemType,
+        category: category === "all" ? undefined : category === "uncategorized"
+          ? { kind: "uncategorized" } : { kind: "value", value: category.slice(6) },
+      };
+      return calculateAnalytics(items, period, now, appSettings.weekStartsOn, filters);
+    },
+    [items, period, now, appSettings.weekStartsOn, category, itemType],
   );
 
   const segments = [
@@ -259,6 +277,11 @@ export default function AnalyticsScreen() {
                 </Pressable>
               );
             })}
+          </View>
+
+          <View style={styles.filterRow}>
+            <FilterMenu label="Category" value={category} options={categoryOptions} onSelect={setCategory} />
+            <FilterMenu label="Type" value={itemType} options={[{ value: "all", label: "All" }, ...typeRows.map(row => ({ value: row.type, label: row.label }))]} onSelect={value => setItemType(value as ItemType | "all")} />
           </View>
 
           {loading ? (
@@ -800,7 +823,40 @@ export default function AnalyticsScreen() {
   );
 }
 
+function FilterMenu({ label, value, options, onSelect }: {
+  label: string; value: string; options: { value: string; label: string }[]; onSelect: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = options.find(option => option.value === value)?.label || "All";
+  return <View style={styles.filterControl}>
+    <Pressable accessibilityRole="button" accessibilityLabel={`${label}: ${selected}`} accessibilityState={{ expanded: open }} onPress={() => setOpen(true)} style={styles.filterButton}>
+      <Text style={styles.filterText}>{label}: {selected}</Text><Ionicons name="chevron-down" size={16} color={PURPLE} />
+    </Pressable>
+    <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+      <View style={styles.menuOverlay}>
+        <Pressable style={StyleSheet.absoluteFillObject} accessibilityLabel={`Close ${label} filter`} onPress={() => setOpen(false)} />
+        <View style={styles.menu} accessibilityViewIsModal>
+          <Text style={styles.sectionTitle}>{label}</Text>
+          <ScrollView>
+            {options.map(option => <Pressable key={option.value} accessibilityRole="radio" accessibilityState={{ checked: value === option.value }} style={styles.menuOption} onPress={() => { onSelect(option.value); setOpen(false); }}>
+              <Text style={styles.filterText}>{option.label}</Text>
+              {value === option.value && <Ionicons name="checkmark" size={20} color={PURPLE} />}
+            </Pressable>)}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  </View>;
+}
+
 const styles = StyleSheet.create({
+  filterRow: { flexDirection: "row", gap: 10 },
+  filterControl: { flex: 1 },
+  filterButton: { minHeight: 48, padding: 12, borderRadius: 12, borderWidth: 1, borderColor: BORDER, backgroundColor: "#FFFFFF", flexDirection: "row", alignItems: "center", gap: 6 },
+  filterText: { flex: 1, fontSize: 12, color: TEXT, fontWeight: "600" },
+  menuOverlay: { flex: 1, justifyContent: "center", alignItems: "center", padding: 24, backgroundColor: "rgba(23,19,41,0.4)" },
+  menu: { width: "100%", maxWidth: 380, maxHeight: "70%", padding: 20, borderRadius: 18, backgroundColor: "#FFFFFF", gap: 12 },
+  menuOption: { minHeight: 48, flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 12 },
   safeArea: {
     flex: 1,
     backgroundColor: PURPLE,

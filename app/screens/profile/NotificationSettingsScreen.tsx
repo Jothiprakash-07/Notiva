@@ -42,12 +42,13 @@ export default function NotificationSettingsScreen() {
       if (generation === previewGeneration.current) setPreviewing(false);
     }
   };
-  useEffect(() => { let active = true; void getNotificationSettings().then(value => { if (active) setSettings(value); }).finally(() => { if (active) setLoading(false); }); return () => { active = false; }; }, []);
+  useEffect(() => { let active = true; void getNotificationSettings().then(value => { if (active) setSettings(value); }).catch(error => { if (active) setError(error instanceof Error ? error.message : "Could not load settings."); }).finally(() => { if (active) setLoading(false); }); return () => { active = false; }; }, []);
   const save = async (value: NotificationSettings) => {
     if (lock.current) return;
     lock.current = true; setBusy(true); setError(""); setMessage("");
-    try { await saveNotificationSettings(value); setSettings(value); setMessage("Saved for newly scheduled alerts. Existing alerts are unchanged."); }
-    catch { setError("Could not save notification settings. Try again."); }
+    setSettings(value);
+    try { await saveNotificationSettings(value); setMessage("Saved. Alarm sound applies to all future firings, including scheduled reminders. Other settings apply when scheduling alerts."); }
+    catch (error) { setError(error instanceof Error ? error.message : "Could not save notification settings. Try again."); }
     finally { lock.current = false; setBusy(false); }
   };
   const test = async () => {
@@ -62,7 +63,7 @@ export default function NotificationSettingsScreen() {
   };
   const selectSound = (sound: AlarmSound) => {
     stopPreview();
-    if (sound !== settings.alarmSound) void save({ ...settings, alarmSound: sound });
+    void save({ ...settings, alarmSound: sound });
   };
   return <ProfilePage title="Notification Settings" subtitle="Useful alerts, on your terms">
     {loading ? <ActivityIndicator /> : <>
@@ -81,12 +82,12 @@ export default function NotificationSettingsScreen() {
           })}
         </View>
         <Action secondary label={previewing ? "Stop Preview" : "Preview Selected Sound"} disabled={busy} onPress={() => void preview()} />
-        <Text style={ui.subtitle}>Previews stop after 5 seconds. Saved automatically for newly scheduled alarms; edit and save an existing reminder to apply this sound.</Text>
+        <Text style={ui.subtitle}>Previews stop after 5 seconds. Your selected sound applies automatically to future alarms, including reminders already scheduled.</Text>
       </Section>}
       <Section title="Reminders"><SettingSwitch title="Pre-alert Notifications" description="Allow advance notifications for newly scheduled items. Exact-time alarms remain enabled." value={settings.preAlerts} onChange={value => void save({ ...settings, preAlerts: value })} disabled={busy} /><Text style={ui.subtitle}>Applies when Alert Before is greater than zero, including birthdays. Existing schedules are unchanged; edit and save an item to apply this setting.</Text></Section>
       <Section title="Alarm Behavior">
         {Platform.OS === "android" && <SettingSwitch title="Vibration" description="Vibrate for newly scheduled native reminder alarms." value={settings.vibration} onChange={value => void save({ ...settings, vibration: value })} disabled={busy} />}
-        {Platform.OS !== "web" && <MenuRow purpleOutline icon="volume-high-outline" title="Open Phone Sound Settings" description="Manage pre-alert notification sound and phone permissions." onPress={() => { stopPreview(); void openNotificationSettings(); }} />}
+        {Platform.OS !== "web" && <MenuRow softAccent icon="volume-high-outline" title="Open Phone Sound Settings" description="Manage pre-alert notification sound and phone permissions." onPress={() => { stopPreview(); void openNotificationSettings(); }} />}
         <Text style={ui.subtitle}>Exact-time reminder alarms stay enabled. Notification sounds and permissions are managed by your phone.</Text>
       </Section>
       {__DEV__ && Platform.OS !== "web" && <Section title="Test"><Text style={ui.subtitle}>{Platform.OS === "android" ? "Creates a test reminder using the existing native alarm flow." : "Schedules a test notification using the existing notification flow."}</Text><Action secondary label={Platform.OS === "android" ? "Test Reminder Alarm" : "Test Notification"} busy={busy} onPress={() => void test()} /></Section>}

@@ -23,11 +23,11 @@ import {
 
 type ReminderCardProps = {
   id: string;
-  priority?: Priority;
+  priority?: Priority | null;
   title: string;
   time: string;
   date: string;
-  category: string;
+  category?: string | null;
   status: ItemStatus;
   type: ItemType;
 
@@ -456,7 +456,7 @@ export default function ReminderCard({
           }
           pointerEvents="none"
         >
-          <View
+          {category?.trim() ? <View
             style={
               styles.categoryBadge
             }
@@ -480,7 +480,7 @@ export default function ReminderCard({
             >
               {category}
             </Text>
-          </View>
+          </View> : null}
 
           <View
             style={

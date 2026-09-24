@@ -36,6 +36,9 @@ class AlarmModule(private val context: ReactApplicationContext) : ReactContextBa
     UiThreadUtil.runOnUiThread { result(p) { AlarmPreview.stop(); null } }
   }
   override fun getName() = "NotivaAlarm"
+  @ReactMethod fun setAlarmSound(sound: String, p: Promise) = result(p) {
+    AlarmStore.setAlarmSound(context, sound); null
+  }
   private fun result(p: Promise, block: () -> Any?) { try { p.resolve(block()) } catch (e: Exception) { p.reject("ALARM_ERROR", e.message, e) } }
   @ReactMethod fun schedule(json: String, p: Promise) = result(p) { AlarmStore.schedule(context, JSONObject(json)) }
   @ReactMethod fun cancel(id: String, p: Promise) {

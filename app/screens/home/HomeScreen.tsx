@@ -672,7 +672,7 @@ export default function HomeScreen() {
                   search
                 ) ||
               reminder.category
-                .toLowerCase()
+                ?.toLowerCase()
                 .includes(
                   search
                 ) ||

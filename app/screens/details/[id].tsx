@@ -364,7 +364,7 @@ export default function DetailsScreen() {
             icon="notifications-outline"
             label="Alert"
             value={
-              item.alertBefore.label
+              item.alertBefore?.label || "None"
             }
           />
         </View>
@@ -379,7 +379,7 @@ export default function DetailsScreen() {
           <InfoRow
             icon="folder-outline"
             label="Category"
-            value={item.category}
+            value={item.category?.trim() || "Uncategorized"}
           />
 
           {item.priority ? (

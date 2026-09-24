@@ -441,24 +441,14 @@ export function rescheduleItem(
           item.startAt
         ).getTime();
 
-      const alert =
-        start -
-        item.alertBefore
-          .minutes *
-          60_000;
-
       if (
         !Number.isFinite(
           start
         ) ||
-        start <= Date.now() ||
-        !Number.isFinite(
-          alert
-        ) ||
-        alert <= Date.now()
+        start <= Date.now()
       ) {
         throw new Error(
-          "Choose a future date, time and alert time."
+          "Choose a future date and time."
         );
       }
 

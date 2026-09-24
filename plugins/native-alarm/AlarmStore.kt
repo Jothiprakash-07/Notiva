@@ -9,6 +9,16 @@ import java.util.Calendar
 
 /** Durable schedules; no JavaScript runtime is needed to fire or re-arm an alarm. */
 object AlarmStore {
+  private fun soundPrefs(c: Context) = c.getSharedPreferences("notiva_alarm_preferences", Context.MODE_PRIVATE)
+  fun setAlarmSound(c: Context, sound: String) {
+    check(soundPrefs(c).edit().putString("alarm_sound", AlarmAudio.normalize(sound)).commit()) {
+      "Could not save alarm sound"
+    }
+  }
+  fun alarmSound(c: Context, payload: JSONObject): String = AlarmAudio.normalize(
+    soundPrefs(c).getString("alarm_sound", null) ?: payload.optString("alarmSound", "system")
+  )
+
   fun prefs(c: Context) = c.getSharedPreferences("notiva.native.alarms.v1", Context.MODE_PRIVATE)
   fun manager(c: Context) = c.getSystemService(AlarmManager::class.java)
   fun allowed(c: Context) = Build.VERSION.SDK_INT < 31 || manager(c).canScheduleExactAlarms()

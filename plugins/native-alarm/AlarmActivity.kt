@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
@@ -20,6 +21,14 @@ class AlarmActivity : Activity() {
   }
 
   private var completing = false
+
+  override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+    if (event.keyCode in listOf(KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.KEYCODE_VOLUME_DOWN, KeyEvent.KEYCODE_VOLUME_MUTE)) {
+      if (event.action == KeyEvent.ACTION_DOWN) AlarmService.instance?.silenceCurrentAlarm()
+      return true
+    }
+    return super.dispatchKeyEvent(event)
+  }
 
   fun closeIfRinging() {
     if (!completing) {
@@ -150,7 +159,7 @@ class AlarmActivity : Activity() {
      * Reminder description
      */
     val description =
-      data.optString("description")
+      if (data.isNull("description")) "" else data.optString("description")
 
     if (
       description.isNotBlank()
