@@ -17,7 +17,10 @@ class AlarmPackage : ReactPackage {
 
 class AlarmModule(private val context: ReactApplicationContext) : ReactContextBaseJavaModule(context), LifecycleEventListener {
   init { context.addLifecycleEventListener(this) }
-  override fun onHostResume() {}
+  override fun onHostResume() {
+    try { AlarmStore.repairFuture(context) }
+    catch (_: Exception) { android.util.Log.w("NotivaAlarm", "Could not repair future alarm pairs") }
+  }
   override fun onHostPause() { UiThreadUtil.runOnUiThread { AlarmPreview.stop() } }
   override fun onHostDestroy() { UiThreadUtil.runOnUiThread { AlarmPreview.stop() } }
   override fun invalidate() {
@@ -40,12 +43,20 @@ class AlarmModule(private val context: ReactApplicationContext) : ReactContextBa
     AlarmStore.setAlarmSound(context, sound); null
   }
   private fun result(p: Promise, block: () -> Any?) { try { p.resolve(block()) } catch (e: Exception) { p.reject("ALARM_ERROR", e.message, e) } }
-  @ReactMethod fun schedule(json: String, p: Promise) = result(p) { AlarmStore.schedule(context, JSONObject(json)) }
+  @ReactMethod fun schedule(json: String, p: Promise) = result(p) { AlarmStore.schedule(context, JSONObject(json).put("preAlertVersion", 1)) }
   @ReactMethod fun cancel(id: String, p: Promise) {
     // Service state and Activity callbacks are confined to the main thread.
     UiThreadUtil.runOnUiThread { result(p) { AlarmStore.cancel(context, id); null } }
   }
   @ReactMethod fun canSchedule(p: Promise) = result(p) { AlarmStore.allowed(context) }
+  @ReactMethod fun dailyOccurrencesVersion(p: Promise) = result(p) { 1 }
+  @ReactMethod fun weeklyOccurrencesVersion(p: Promise) = result(p) { 1 }
+  @ReactMethod fun weekdaysOccurrencesVersion(p: Promise) = result(p) { 1 }
+  @ReactMethod fun nativePreAlertsVersion(p: Promise) = result(p) { 1 }
+  @ReactMethod fun setPreAlertSettings(enabled: Boolean, vibration: Boolean, p: Promise) = result(p) {
+    AlarmStore.setPreAlertSettings(context, enabled, vibration); null
+  }
+  @ReactMethod fun hasSchedule(id: String, p: Promise) = result(p) { AlarmStore.get(context, id)?.optInt("preAlertVersion") == 1 }
   @ReactMethod fun canFullScreen(p: Promise) = result(p) {
     Build.VERSION.SDK_INT < 34 || context.getSystemService(NotificationManager::class.java).canUseFullScreenIntent()
   }
@@ -58,9 +69,13 @@ class AlarmModule(private val context: ReactApplicationContext) : ReactContextBa
   @ReactMethod fun openFullScreenSettings(p: Promise) = result(p) {
     settings(if (Build.VERSION.SDK_INT >= 34) Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT else Settings.ACTION_APPLICATION_DETAILS_SETTINGS); null
   }
-  @ReactMethod fun pendingDone(p: Promise) = result(p) {
-    AlarmStore.prefs(context).all.filterKeys { it.startsWith("done:") }.toSortedMap().values.firstOrNull() as String?
-  }
+  private fun pendingCompletion(account: String?): String? = AlarmStore.prefs(context).all
+    .filterKeys { it.startsWith("done:") }.values.map { org.json.JSONObject(it as String) }
+    .filter { account == null || Regex("notiva-account\\[([^\\]]+)\\]::")
+      .find(it.getString("itemId"))?.groupValues?.get(1) == Uri.encode(account) }
+    .maxByOrNull { it.optLong("requestedAt", 0) }?.toString()
+  @ReactMethod fun pendingDone(p: Promise) = result(p) { pendingCompletion(null) }
+  @ReactMethod fun pendingDoneForAccount(account: String, p: Promise) = result(p) { pendingCompletion(account) }
   @ReactMethod fun acknowledgeDone(token: String, p: Promise) = result(p) {
     AlarmStore.prefs(context).edit().remove("done:$token").commit(); null
   }

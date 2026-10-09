@@ -33,7 +33,19 @@ export type AlertBefore = {
 };
 
 export type ReminderItem = {
+  syncStatus?: "pending_create" | "pending_update" | "pending_delete" | "synced" | "sync_error";
+  serverRevision?: number;
+  serverUpdatedAt?: string;
+  lastSyncedAt?: string;
+  /** Device-only restore intent, never sent to the server. */
+  restoreNeedsScheduling?: boolean;
   id: string;
+  /** One stable series ID; each dated occurrence retains its own item ID. */
+  seriesId?: string;
+  /** Stored only on the original occurrence, even after it is completed. */
+  dailySeries?: DailySeries;
+  completedAt?: string;
+  dailyHidden?: boolean;
 
   type: ItemType;
 
@@ -44,6 +56,8 @@ export type ReminderItem = {
   category?: string | null;
 
   repeat: RepeatType;
+  /** Local weekdays: Sunday = 0 through Saturday = 6. */
+  weeklyDays?: number[];
 
   priority?: Priority | null;
 
@@ -76,4 +90,16 @@ export type ReminderItem = {
   createdAt: string;
 
   updatedAt: string;
+};
+
+export type DailySeries = {
+  /** Legacy storage name retained for compatibility with existing Daily data. */
+  repeat?: "daily" | "weekly" | "weekdays";
+  active: boolean;
+  firstAt: string;
+  templateId: string;
+  template: Pick<ReminderItem, "type" | "title" | "description" | "category" | "priority" | "alertBefore" | "startAt" | "endAt" | "allDay" | "location" | "notes" | "weeklyDays">;
+  excludedDates: string[];
+  notificationIds: string[];
+  dirty: boolean;
 };

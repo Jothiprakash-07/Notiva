@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AppState, Alert } from 'react-native';
 import { router } from 'expo-router';
 import CompletionNoteModal from './CompletionNoteModal';
@@ -6,10 +6,12 @@ import { getItemById, toggleComplete, migrateAndroidMainAlarms } from '../../ser
 import { nativeAlarm, readPendingAlarmDone } from '../../services/nativeAlarm';
 import { getItemStatus } from '../../utils/itemStatus';
 import type { ReminderItem } from '../../types/item';
+import { ownsAlarmItemId } from '../../services/itemAccount';
 
 /** Native Done is durable across cold launches; status changes only on confirmation. */
 export default function NativeAlarmCompletion() {
   const [pending, setPending] = useState<{ token: string; item: ReminderItem }>();
+  const saving = useRef(false);
   useEffect(() => {
     const migrate = () => { void migrateAndroidMainAlarms().catch(error => console.warn('Could not migrate Android alarms:', error)); };
     migrate();
@@ -20,13 +22,15 @@ export default function NativeAlarmCompletion() {
     let active = true;
     let reading = false;
     const recover = async () => {
-      if (reading || pending || AppState.currentState !== 'active') return;
+      if (reading || saving.current || AppState.currentState !== 'active') return;
       reading = true;
       try {
         const action = await readPendingAlarmDone();
         if (!action || !active) return;
+        if (action.token === pending?.token) return;
+        if (!ownsAlarmItemId(action.itemId)) return;
         const item = await getItemById(action.itemId);
-        if (!active) return;
+        if (!active || saving.current) return;
         if (!item || !['Pending', 'Missed', 'Overdue'].includes(getItemStatus(item)) || !['reminder', 'task'].includes(item.type)) {
           await nativeAlarm().acknowledgeDone(action.token);
           return;
@@ -44,18 +48,21 @@ export default function NativeAlarmCompletion() {
   const close = async () => {
     if (!pending) return;
     await nativeAlarm().acknowledgeDone(pending.token);
-    setPending(undefined);
+    setPending(current => current?.token === pending.token ? undefined : current);
   };
-  return <CompletionNoteModal visible={!!pending} itemTitle={pending?.item.title}
+  return <CompletionNoteModal key={pending?.token ?? 'none'} visible={!!pending} itemTitle={pending?.item.title}
     onClose={() => { void close().catch(() => Alert.alert('Could not close', 'Please try again.')); }}
     onConfirm={async note => {
       if (!pending) return;
-      await toggleComplete(pending.item.id, note);
-      await close();
-      // The screen behind this global modal may have loaded before completion.
-      // Reuse notification routing to reload storage and show the saved item.
-      router.replace({ pathname: '/(tabs)', params: {
-        notificationItemId: pending.item.id, notificationResponseId: pending.token,
-      } });
+      saving.current = true;
+      try {
+        await toggleComplete(pending.item.id, note);
+        await close();
+        // The screen behind this global modal may have loaded before completion.
+        // Reuse notification routing to reload storage and show the saved item.
+        router.replace({ pathname: '/(tabs)', params: {
+          notificationItemId: pending.item.id, notificationResponseId: pending.token,
+        } });
+      } finally { saving.current = false; }
     }} />;
 }

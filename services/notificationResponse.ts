@@ -1,4 +1,5 @@
 import * as Notifications from "expo-notifications";
+import { ownsAlarmItemId, localAlarmItemId } from "./itemAccount";
 import { getItemById } from "./itemStorage";
 import { cancelNotifications } from "./notificationService";
 import { recordNotification } from "./notificationHistory";
@@ -17,6 +18,7 @@ export async function consumeNotificationResponse(
   if (handled.has(responseKey)) return;
   const itemId = response.notification.request.content.data?.itemId;
   if (typeof itemId !== "string" || !itemId.trim()) return;
+  if (!ownsAlarmItemId(itemId)) return;
   handled.add(responseKey);
   // History failures must not prevent the existing phone-tap cleanup/routing.
   await recordNotification(response.notification, true).catch(error => {
@@ -54,5 +56,6 @@ export async function consumeNotificationResponse(
   } catch (error) {
     console.warn("Could not finish notification response cleanup:", error);
   }
-  return { itemId, responseKey };
+  const localId = localAlarmItemId(itemId);
+  return localId === undefined ? undefined : { itemId: localId, responseKey };
 }

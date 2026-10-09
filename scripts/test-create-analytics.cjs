@@ -19,7 +19,7 @@ class TestDate extends Date {
   static now() { return testNow; }
 }
 const root = createRoot(document.getElementById('root'));
-let params = {}, existing, saved, rows = [], route, renderKey = 0;
+let params = {}, existing, saved, rows = [], route, renderKey = 0, schedulingCalls = 0;
 const view = tag => ({ children, onPress, accessibilityLabel, accessibilityState, disabled }) => React.createElement(tag, {
   onClick: onPress, 'aria-label': accessibilityLabel, 'aria-checked': accessibilityState?.checked, disabled,
 }, children);
@@ -46,8 +46,10 @@ function load(relative) {
     if (id === '@react-native-community/datetimepicker') return { default: () => null };
     if (id === 'react-native-svg') return { default: native.View, Circle: () => null };
     if (id === 'expo-router') return { router: { replace: value => { route = value; }, push: value => { route = value; }, back() {} }, useLocalSearchParams: () => params, useFocusEffect: callback => React.useEffect(callback, [callback]) };
-    if (id.endsWith('services/itemStorage')) return { getItems: async () => rows, getItemById: async () => existing, saveItem: async item => { saved = item; }, updateItem: async item => { saved = item; }, rescheduleItem: async item => { saved = item; } };
-    if (id.endsWith('services/notificationService')) return { scheduleItemNotifications: async () => ['native-alarm:test'], cancelNotifications: async () => {} };
+    if (id.endsWith('services/itemStorage')) return { getItems: async () => rows, getItemById: async () => existing,
+      getScheduleConflicts: async item => load('utils/itemStatus.ts').findScheduleConflicts(rows, item, new TestDate()),
+      saveItem: async item => { saved = item; }, updateItem: async item => { saved = item; }, rescheduleItem: async item => { saved = item; } };
+    if (id.endsWith('services/notificationService')) return { scheduleItemNotifications: async () => { schedulingCalls++; return ['native-alarm:test']; }, cancelNotifications: async () => {} };
     if (id.endsWith('services/appSettings')) return { getAppSettings: async () => ({ weekStartsOn: 1 }), useAppSettings: () => ({ weekStartsOn: 1 }) };
     return load(path.resolve(path.dirname(file), id + '.ts'));
   } });
@@ -71,21 +73,40 @@ const make = (id, overrides = {}) => ({ id, title: id, type: 'task', startAt: ne
   for (const type of ['reminder', 'task', 'event', 'birthday']) {
     params = { type }; existing = undefined; saved = undefined;
     await render(Create);
-    assert.ok(document.body.textContent.includes('Add Category'));
-    assert.ok(document.body.textContent.includes('Add Alert'));
-    assert.equal(document.body.textContent.includes('Add Priority'), ['reminder', 'task'].includes(type));
+    assert.ok(checked('Personal'));
+    assert.ok(checked('5 Minutes Before'));
+    assert.equal(checked('Medium'), ['reminder', 'task'].includes(type));
     assert.ok(checked('None'));
     await title('New item');
     await click(`Save ${type[0].toUpperCase() + type.slice(1)}`);
     assert.ok(saved, type + ': ' + document.body.textContent);
-    assert.equal(saved.category, undefined); assert.equal(saved.priority, undefined); assert.equal(saved.alertBefore, undefined); assert.equal(saved.repeat, 'none');
+    assert.equal(saved.category, 'Personal'); assert.equal(saved.priority, ['reminder', 'task'].includes(type) ? 'Medium' : undefined); assert.equal(saved.alertBefore.minutes, 5); assert.equal(saved.repeat, 'none');
   }
   params = { type: 'task' }; await render(Create);
-  await click('Add Priority'); await click('High');
-  await click('Add Category'); await click('Work');
-  await click('Add Alert'); await click('5 Minutes Before'); await click('Weekly');
+  const callsBeforeSelections = schedulingCalls;
+  await click('High');
+  await click('Work');
+  await click('10 Minutes Before'); await click('Weekly');
+  assert.ok(checked('Wed'), 'selected date supplies initial weekday');
+  await click('Mon'); await click('Fri');
+  assert.equal(schedulingCalls, callsBeforeSelections, 'form selections must not invoke scheduling/permission checks');
   await title('Selected'); await click('Save Task');
-  assert.equal(saved.priority, 'High'); assert.equal(saved.category, 'Work'); assert.equal(saved.alertBefore.minutes, 5); assert.equal(saved.repeat, 'weekly');
+  assert.equal(saved.priority, 'High'); assert.equal(saved.category, 'Work'); assert.equal(saved.alertBefore.minutes, 10); assert.equal(saved.repeat, 'weekly');
+  assert.deepEqual(Array.from(saved.weeklyDays), [1, 3, 5]);
+  assert.equal(schedulingCalls, callsBeforeSelections, 'Weekly storage owns scheduling; no duplicate screen scheduling');
+  saved = undefined;
+  await click('Mon'); await click('Wed'); await click('Fri');
+  await click('Save Task');
+  assert.equal(saved, undefined, 'empty weekday selection is rejected');
+  assert.ok(document.body.textContent.includes('Choose at least one weekday.'));
+  assert.equal(schedulingCalls, callsBeforeSelections);
+  await click('Weekdays');
+  assert.ok(document.body.textContent.includes('Repeats Monday to Friday'));
+  assert.ok(![...document.querySelectorAll('button')].some(el => el.textContent === 'Mon'), 'Weekdays has no weekday chips');
+  await click('Save Task');
+  assert.equal(saved.repeat, 'weekdays'); assert.equal(saved.weeklyDays, undefined);
+  assert.equal(schedulingCalls, callsBeforeSelections, 'Weekdays scheduling belongs to storage');
+  await click('Weekly'); assert.ok(checked('Wed'), 'Weekly selection still works after Weekdays');
   for (const type of ['reminder', 'task', 'event', 'birthday']) {
     existing = make('edit', { type, category: 'Custom category', priority: ['reminder', 'task'].includes(type) ? 'Low' : undefined, alertBefore: { label: '1 Day Before', minutes: 1440 }, repeat: 'yearly' });
     params = { type, id: existing.id }; await render(Create);
@@ -93,7 +114,50 @@ const make = (id, overrides = {}) => ({ id, title: id, type: 'task', startAt: ne
     await click(`Save ${type[0].toUpperCase() + type.slice(1)}`);
     assert.equal(saved.category, existing.category); assert.equal(saved.priority, existing.priority); assert.equal(saved.alertBefore.minutes, 1440); assert.equal(saved.repeat, 'yearly');
   }
+  for (const type of ['reminder', 'task', 'event', 'birthday']) {
+    existing = make('edit-empty', { type }); params = { type, id: existing.id };
+    await render(Create);
+    assert.ok(document.body.textContent.includes('Add Category'));
+    assert.ok(document.body.textContent.includes('Add Alert'));
+    assert.ok(!checked('Medium')); assert.ok(!checked('Personal')); assert.ok(!checked('5 Minutes Before'));
+    await click(`Save ${type[0].toUpperCase() + type.slice(1)}`);
+    assert.equal(saved.category, undefined); assert.equal(saved.priority, undefined); assert.equal(saved.alertBefore, undefined); assert.equal(saved.repeat, 'none');
+  }
   console.log('PASS all four create defaults, explicit optional selections and saved edit values');
+
+  const { findScheduleConflicts } = load('utils/itemStatus.ts');
+  const at = new Date(testNow).toISOString();
+  const candidate = make('candidate', { startAt: at });
+  const conflictRow = make('other', { startAt: at });
+  assert.equal(findScheduleConflicts([], candidate).length, 0);
+  assert.equal(findScheduleConflicts([make('other', { startAt: new Date(testNow + 60000).toISOString() })], candidate).length, 0);
+  assert.equal(findScheduleConflicts([make('other', { startAt: new Date(testNow + 86400000).toISOString() })], candidate).length, 0);
+  assert.equal(findScheduleConflicts([candidate], candidate).length, 0);
+  assert.equal(findScheduleConflicts([conflictRow], candidate).length, 1);
+  for (const fields of [{ completed: true }, { actionResolved: true }, { status: 'Done' }, { syncStatus: 'pending_delete' },
+    { type: 'event', status: 'Cancelled' }, { type: 'event', endAt: new Date(testNow - 1).toISOString() }]) {
+    assert.equal(findScheduleConflicts([{ ...conflictRow, ...fields }], candidate).length, 0);
+  }
+  const unchanged = JSON.stringify(conflictRow);
+  rows = [conflictRow]; existing = undefined; params = { type: 'task' }; saved = undefined;
+  await render(Create); await title('Keep entered title'); await click('High'); await click('Work'); await click('10 Minutes Before');
+  const inputBefore = [...document.querySelectorAll('input')].map(input => input.value);
+  const scheduleBefore = schedulingCalls;
+  await click('Save Task');
+  assert.ok(document.body.textContent.includes('Schedule conflict')); assert.equal(saved, undefined); assert.equal(schedulingCalls, scheduleBefore);
+  await click('Change Time');
+  assert.equal(saved, undefined); assert.deepEqual([...document.querySelectorAll('input')].map(input => input.value), inputBefore);
+  assert.ok(checked('High')); assert.ok(checked('Work')); assert.ok(checked('10 Minutes Before'));
+  await click('Save Task'); await click('Keep Same Time');
+  assert.equal(saved.title, 'Keep entered title'); assert.equal(saved.priority, 'High'); assert.equal(saved.category, 'Work');
+  assert.equal(JSON.stringify(conflictRow), unchanged); assert.equal(schedulingCalls, scheduleBefore + 1);
+  existing = make('editing'); params = { type: 'task', id: 'editing' }; rows = [existing]; saved = undefined;
+  await render(Create); await click('Save Task'); assert.ok(saved); assert.ok(!document.body.textContent.includes('Schedule conflict'));
+  rows = [existing, make('edit-conflict')]; saved = undefined; await render(Create); await click('Save Task');
+  assert.ok(document.body.textContent.includes('Schedule conflict')); assert.equal(saved, undefined);
+  await click('Keep Same Time'); assert.equal(saved.id, 'editing');
+  rows = []; existing = undefined;
+  console.log('PASS offline local conflict slots, active-state exclusions, self-edit, Change Time field preservation and Keep Same Time independent save');
 
   const now = new Date(2026, 8, 23, 12);
   const month = new Date(2026, 8, 20, 12).toISOString();

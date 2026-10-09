@@ -45,3 +45,9 @@ app-example
 # Local Android validation toolchain
 .build-tools/
 hs_err_pid*.log
+
+
+backend/.env
+.env
+.env.*  
+!.env.example

@@ -10,6 +10,8 @@ function harness(os, files = new Map()) {
   const cache = new Map(), alarms = new Map(), notifications = new Map();
   let sequence = 0;
   const bridge = {
+    nativePreAlertsVersion: async () => 1,
+    setPreAlertSettings: async (enabled, vibration) => { bridge.preEnabled = enabled; bridge.preVibration = vibration; },
     setAlarmSound: async sound => { bridge.selectedSound = sound; },
     canSchedule: async () => true,
     canFullScreen: async () => true,
@@ -65,7 +67,7 @@ function harness(os, files = new Map()) {
   const restartedSound = harness('android', soundHarness.files);
   assert.equal((await restartedSound.load('services/notificationService.ts').getNotificationSettings()).alarmSound, 'robotic_loop');
   assert.equal(restartedSound.bridge.selectedSound, 'robotic_loop');
-  assert.equal([...soundHarness.notifications.values()][0].content.sound, 'default');
+  assert.equal(soundHarness.notifications.size, 0);
   console.log('PASS latest sound mirrors independently of old payloads, serialized startup/save, restart and unchanged pre-alert sound');
   for (const os of ['web', 'android', 'ios']) {
     const h = harness(os);
@@ -112,7 +114,7 @@ function harness(os, files = new Map()) {
     await service.saveNotificationSettings({ repeatCount: 1, repeatIntervalSeconds: 5, vibration: true, preAlerts: true });
     assert.equal(h.notifications.size, 0, 'preference changes do not rewrite existing schedules');
     await service.scheduleItemNotifications(item, true);
-    assert.ok(h.notifications.size > 0);
+    assert.equal(h.notifications.size, 0); assert.equal(h.bridge.preEnabled, true);
     assert.equal(h.alarms.size, 1);
     assert.equal([...h.alarms.values()][0].vibration, true);
   }
@@ -163,7 +165,7 @@ function harness(os, files = new Map()) {
           assert.equal(notification.content.sound, 'default');
           assert.equal(notification.content.data.alertType, 'pre-alert');
         }
-        if (repeat === 'none') assert.equal(h.notifications.size, 1);
+        assert.equal(h.notifications.size, 0); assert.equal(alarm.preAlertMinutes, 5);
       }
     }
   }

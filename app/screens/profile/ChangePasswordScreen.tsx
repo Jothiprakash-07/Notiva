@@ -5,7 +5,7 @@ import { Action, Field, ProfilePage, ui } from "../../../components/profile/Prof
 import { changePassword, ProfileError } from "../../../services/profileService";
 
 export default function ChangePasswordScreen() {
-  const { session } = useAuth();
+  const { session, replaceSession } = useAuth();
   const [values, setValues] = useState({ currentPassword: "", newPassword: "", confirm: "" });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [message, setMessage] = useState("");
@@ -21,7 +21,13 @@ export default function ChangePasswordScreen() {
     if (Object.keys(next).length) return;
     lock.current = true; setBusy(true);
     try {
-      await changePassword(session.token, values.currentPassword, values.newPassword);
+      const result = await changePassword(session.token, values.currentPassword, values.newPassword);
+      if (!result.token || result.user?.id !== session.user.id) throw new Error("Password updated, but your session could not be renewed. Sign in with your new password.");
+      try {
+        if (!(await replaceSession(session.token, { token: result.token, user: result.user }))) return;
+      } catch {
+        throw new Error("Password updated, but your session could not be saved. Sign in with your new password.");
+      }
       setValues({ currentPassword: "", newPassword: "", confirm: "" });
       setMessage("Password updated. You remain signed in.");
     } catch (error) { setErrors({ ...(error instanceof ProfileError ? error.errors : {}), form: error instanceof Error ? error.message : "Could not update password." }); }

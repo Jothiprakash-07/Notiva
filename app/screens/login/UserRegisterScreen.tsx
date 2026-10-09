@@ -1,12 +1,16 @@
+import { router } from "expo-router";
+import { useAuth } from "../../../contexts/AuthContext";
+import { suggestNotivaId } from "../../../services/notivaIdentityService";
+import { isValidNotivaId } from "../../../utils/notivaId";
+import { useNotivaIdAvailability, ID_FORMAT, ID_TAKEN } from "../../../hooks/useNotivaIdAvailability";
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   Pressable,
   ScrollView,
-  StatusBar,
   StyleSheet,
   Text,
   TextInput,
@@ -24,6 +28,7 @@ type UserRegisterScreenProps = {
 
 type FieldErrors = {
   fullName?: string;
+  notivaId?: string;
   email?: string;
   mobileNumber?: string;
   password?: string;
@@ -34,7 +39,15 @@ type FieldErrors = {
 export default function UserRegisterScreen({
   onBack,
 }: UserRegisterScreenProps) {
+  const { signIn } = useAuth();
+  const [notivaId, setNotivaId] = useState("");
+  const [manuallyEdited, setManuallyEdited] = useState(false);
+  const manualRef = useRef(false);
+  const createdRef = useRef(false);
+  const [suggestionMessage, setSuggestionMessage] = useState("");
+  const availability = useNotivaIdAvailability(notivaId);
   const [fullName, setFullName] = useState("");
+  const registrationLock = useRef(false);
   const [email, setEmail] = useState("");
   const [mobileNumber, setMobileNumber] = useState("");
   const [organizationCode, setOrganizationCode] = useState("");
@@ -49,15 +62,21 @@ export default function UserRegisterScreen({
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
-  const clearForm = () => {
-    setFullName("");
-    setEmail("");
-    setMobileNumber("");
-    setOrganizationCode("");
-    setDepartment("");
-    setPassword("");
-    setConfirmPassword("");
-  };
+  useEffect(() => {
+    if (manuallyEdited || !fullName.trim()) return;
+    let active = true;
+    const controller = new AbortController();
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    setSuggestionMessage("Generating Notiva ID…");
+    const timer = setTimeout(() => {
+      timeout = setTimeout(() => controller.abort(), 15000);
+      suggestNotivaId(fullName.trim(), controller.signal)
+        .then(value => { if (active && !manualRef.current) { setNotivaId(value); setSuggestionMessage(""); } })
+        .catch(() => { if (active && !manualRef.current) setSuggestionMessage("Unable to generate a suggestion. Enter your own Notiva ID or try changing your name again."); })
+        .finally(() => clearTimeout(timeout));
+    }, 400);
+    return () => { active = false; controller.abort(); clearTimeout(timer); clearTimeout(timeout); };
+  }, [fullName, manuallyEdited]);
 
   const clearFieldError = (
     field: keyof FieldErrors
@@ -77,6 +96,7 @@ export default function UserRegisterScreen({
     const trimmedMobileNumber = mobileNumber.trim();
 
     const newErrors: FieldErrors = {};
+    if (!isValidNotivaId(notivaId.trim())) newErrors.notivaId = ID_FORMAT;
 
     if (!trimmedFullName) {
       newErrors.fullName =
@@ -87,14 +107,13 @@ export default function UserRegisterScreen({
       newErrors.email =
         "Email address is required.";
     } else if (
-      !trimmedEmail.includes("@") ||
-      !trimmedEmail.includes(".")
+      !/^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/.test(trimmedEmail)
     ) {
       newErrors.email =
         "Please enter a valid email address.";
     }
 
-    if (!trimmedMobileNumber) {
+    if (!/^\+?[\d ()-]{7,25}$/.test(trimmedMobileNumber) || !/^\d{7,15}$/.test(trimmedMobileNumber.replace(/\D/g, ""))) {
       newErrors.mobileNumber =
         "Mobile number is required.";
     }
@@ -125,18 +144,22 @@ export default function UserRegisterScreen({
   };
 
   const handleCreateAccount = async () => {
+    if (registrationLock.current || createdRef.current) return;
     if (!validateForm()) {
       return;
     }
 
     try {
+      registrationLock.current = true;
       setSubmitting(true);
       setErrors({});
       setSuccess("");
 
       const registerData = {
         fullName: fullName.trim(),
-        email: email.trim(),
+        notivaId: notivaId.trim(),
+        recoveryEmail: email.trim().toLowerCase(),
+        confirmPassword,
         mobileNumber: mobileNumber.trim(),
         organizationCode: organizationCode.trim(),
         department: department.trim(),
@@ -159,44 +182,36 @@ export default function UserRegisterScreen({
       if (!response.ok) {
         setErrors({
           api:
-            data?.message ||
+            (response.status === 409 ? ID_TAKEN : typeof data?.message === "string" && response.status < 500 ? data.message : "") ||
             "User registration failed.",
         });
 
         return;
       }
 
-      setSuccess(
-        data?.message ||
-          "User registered successfully."
-      );
+      createdRef.current = true;
+      if (typeof data?.token !== "string" || !data.token.trim() || typeof data?.user?.id !== "string" ||
+          !data.user.id || typeof data.user.fullName !== "string" || !data.user.notivaId) {
+        throw new Error("Account created, but automatic sign-in could not be completed. Return to Login and use your Notiva ID.");
+      }
+      try { await signIn({ token: data.token, user: data.user }); }
+      catch { throw new Error("Account created, but your session could not be saved. Return to Login and sign in with your Notiva ID."); }
+      router.replace("/(tabs)");
 
-      clearForm();
-
-      setTimeout(() => {
-        onBack?.();
-      }, 900);
-    } catch (registerError) {
-      const message =
-        registerError instanceof Error
-          ? registerError.message
-          : "User registration failed.";
+    } catch (error) {
+      const message = createdRef.current && error instanceof Error ? error.message : "Unable to connect. Please try again.";
 
       setErrors({
         api: message,
       });
     } finally {
+      registrationLock.current = false;
       setSubmitting(false);
     }
   };
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar
-        barStyle="dark-content"
-        backgroundColor="#ffffff"
-      />
-
       <KeyboardAvoidingView
         style={styles.keyboardView}
         behavior={
@@ -305,8 +320,17 @@ export default function UserRegisterScreen({
               message={errors.fullName}
             />
 
+
+            <FieldLabel label="Notiva ID" required />
+            <InputBox icon="person-outline" error={Boolean(errors.notivaId)}>
+              <TextInput style={styles.input} accessibilityLabel="Notiva ID" placeholder="Your suggested Notiva ID" autoCapitalize="none" autoCorrect={false} value={notivaId} maxLength={30} editable={!submitting && !createdRef.current}
+                onChangeText={value => { manualRef.current = true; setManuallyEdited(true); setNotivaId(value); setSuggestionMessage(""); clearFieldError("notivaId"); }} />
+            </InputBox>
+            <FieldError message={errors.notivaId} />
+            <Text accessibilityLiveRegion="polite" style={styles.introText}>{suggestionMessage || availability || "Keep the suggestion or choose your own login ID."}</Text>
+
             <FieldLabel
-              label="Email Address"
+              label="Recovery Email"
               required
             />
 
@@ -578,7 +602,7 @@ export default function UserRegisterScreen({
           {/* Create */}
           <Pressable
             accessibilityRole="button"
-            disabled={submitting}
+            disabled={submitting || createdRef.current}
             style={({ pressed }) => [
               styles.createButton,
 

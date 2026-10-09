@@ -6,13 +6,21 @@ const path = require('node:path');
 const vm = require('node:vm');
 const ts = require('typescript');
 const root = path.resolve(__dirname, '..');
-function harness(os = 'android') {
+function harness(os = 'android', Clock = Date, options = {}) {
+  const appListeners = [];
+  const appState = { currentState: 'active', addEventListener: (_event, fn) => { appListeners.push(fn); return { remove: () => appListeners.splice(appListeners.indexOf(fn), 1) }; } };
   const cache = new Map(), files = new Map(), expo = new Map(), alarms = new Map();
-  const cancelled = [], popups = [];
+  const cancelled = [], popups = [], diagnostics = [];
   let nextTrigger = () => Date.now() + 100000;
   let counter = 0, exact = true, fail = false;
   const bridge = {
     setAlarmSound: async () => {},
+    dailyOccurrencesVersion: async () => 1,
+    weeklyOccurrencesVersion: async () => 1,
+    weekdaysOccurrencesVersion: async () => 1,
+    nativePreAlertsVersion: async () => 1,
+    setPreAlertSettings: async (enabled, vibration) => { bridge.preEnabled = enabled; bridge.preVibration = vibration; },
+    hasSchedule: async id => alarms.has(id),
     canSchedule: async () => exact, canFullScreen: async () => true,
     schedule: async raw => { if (fail) throw Error('native failure'); const data = JSON.parse(raw); alarms.set(data.id, data); return data.id; },
     cancel: async id => { cancelled.push(id); alarms.delete(id); },
@@ -31,7 +39,9 @@ function harness(os = 'android') {
     getLastNotificationResponseAsync: async () => null,
   };
   const mocks = {
-    'react-native': { Platform: { OS: os, Version: 36 }, NativeModules: { NotivaAlarm: bridge }, Alert: { alert: (...args) => popups.push(args) }, Linking: {} },
+    // Existing alarm regressions run in the preserved legacy storage sandbox.
+    './itemAccount': { getItemAccount: () => undefined, accountAlarmId: id => id, localAlarmItemId: id => id, ownsAlarmItemId: () => true },
+    'react-native': { AppState: appState, Platform: { OS: os, Version: 36 }, NativeModules: { NotivaAlarm: bridge }, Alert: { alert: (...args) => popups.push(args) }, Linking: {} },
     'expo-notifications': notifications,
     'expo-file-system': { Paths: { document: 'docs' }, File: class {
       constructor(dir, name) { this.key = dir + '/' + name; }
@@ -40,25 +50,42 @@ function harness(os = 'android') {
       write(raw) { files.set(this.key, raw); }
     } },
   };
+  if (options.sync) delete mocks['./itemAccount'];
+  Object.assign(mocks, options.mocks);
   function load(relative) {
     const file = path.resolve(root, relative);
     if (file.endsWith('notificationHistory.ts')) return { recordNotification: async () => {} };
     if (cache.has(file)) return cache.get(file).exports;
     const module = { exports: {} }; cache.set(file, module);
     const code = ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText;
-    vm.runInNewContext(code, { module, exports: module.exports, __DEV__: true, Date, Error, console: { log() {}, warn() {} },
+    vm.runInNewContext(code, { module, exports: module.exports, __DEV__: true, Date: Clock, Error,
+      setTimeout, clearTimeout, AbortController, fetch: options.fetch, process: { env: {} },
+      localStorage: options.localStorage,
+      console: { log: (...args) => diagnostics.push(args), warn: (...args) => diagnostics.push(args) },
       require: name => mocks[name] || load(path.relative(root, path.resolve(path.dirname(file), name + '.ts'))),
     }, { filename: file });
     return module.exports;
   }
-  return { load, expo, alarms, cancelled, popups, setNextTrigger: value => { nextTrigger = value; }, setExact: value => { exact = value; }, setFail: value => { fail = value; } };
+  return { load, expo, alarms, cancelled, popups, notifications, diagnostics, bridge, files,
+    foreground: value => { appState.currentState = value; appListeners.forEach(fn => fn(value)); },
+    editStoredItems: edit => { const key = 'docs/notiva.items.v1.json'; files.set(key, JSON.stringify(edit(JSON.parse(files.get(key))))); },
+    restart: () => cache.clear(), setNextTrigger: value => { nextTrigger = value; }, setExact: value => { exact = value; }, setFail: value => { fail = value; } };
 }
 const makeItem = (overrides = {}) => ({
   id: 'reminder', type: 'reminder', title: 'Read', description: '', category: 'Personal', repeat: 'none',
   startAt: new Date(Date.now() + 3600000).toISOString(), alertBefore: { minutes: 5, label: '5 minutes' },
   notificationIds: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), ...overrides,
 });
-(async () => {
+async function run() {
+  const pending = harness('android', Date, { sync: true });
+  pending.load('services/itemAccount.ts').selectItemAccount({ user: { id: 'active' }, token: 'test' });
+  pending.bridge.pendingDone = async () => { throw Error('Unscoped pending request must not be read'); };
+  pending.bridge.pendingDoneForAccount = async account => {
+    assert.equal(account, 'active'); return JSON.stringify({ token: 'selected', itemId: 'notiva-account[active]::selected' });
+  };
+  assert.equal((await pending.load('services/nativeAlarm.ts').readPendingAlarmDone()).token, 'selected');
+  pending.load('services/itemAccount.ts').selectItemAccount(null);
+  assert.equal(await pending.load('services/nativeAlarm.ts').readPendingAlarmDone(), undefined);
   for (const os of ['android', 'ios']) {
     for (const alertBefore of [undefined, null, { minutes: 0 }, { minutes: 5 }]) {
       const h = harness(os);
@@ -76,15 +103,15 @@ const makeItem = (overrides = {}) => ({
   const future = harness();
   const futureItem = makeItem({ startAt: new Date(Date.now() + 10 * 60000).toISOString() });
   await future.load('services/notificationService.ts').scheduleItemNotifications(futureItem, true);
-  assert.equal(future.expo.size, 1); assert.equal(future.alarms.size, 1);
-  assert.equal([...future.expo.values()][0].trigger.date.getTime(), new Date(futureItem.startAt).getTime() - 5 * 60000);
+  assert.equal(future.expo.size, 0); assert.equal(future.alarms.size, 1);
+  assert.equal([...future.alarms.values()][0].preAlertMinutes, 5);
   for (const repeat of ['daily', 'weekly', 'weekdays', 'monthly', 'yearly']) {
     for (const expired of [false, true]) {
       const h = harness();
       if (expired) h.setNextTrigger(() => Date.now() - 60000);
       await h.load('services/notificationService.ts').scheduleItemNotifications(makeItem({ repeat, startAt: new Date(Date.now() + 4 * 60000).toISOString() }));
       assert.equal(h.alarms.size, 1); assert.equal(h.popups.length, 0);
-      assert.equal(h.expo.size, expired ? 0 : repeat === 'weekdays' ? 5 : 1);
+      assert.equal(h.expo.size, 0);
     }
   }
   const pastMain = harness();
@@ -95,13 +122,12 @@ const makeItem = (overrides = {}) => ({
   const tenPM = new Date(); tenPM.setDate(tenPM.getDate() + 1); tenPM.setHours(22, 0, 0, 0);
   const item = makeItem({ startAt: tenPM.toISOString() });
   item.notificationIds = await service.scheduleItemNotifications(item, true);
-  assert.equal(h.expo.size, 1); assert.equal(h.alarms.size, 1);
-  const pre = [...h.expo.values()][0], main = [...h.alarms.values()][0];
-  assert.equal(pre.trigger.date.getTime(), new Date(item.startAt).getTime() - 300000);
-  assert.equal(pre.trigger.date.getHours(), 21); assert.equal(pre.trigger.date.getMinutes(), 55);
-  assert.equal(pre.content.sound, 'default');
+  assert.equal(h.expo.size, 0); assert.equal(h.alarms.size, 1);
+  const main = [...h.alarms.values()][0];
+  assert.equal(main.preAlertMinutes, 5);
   assert.equal(main.startAt, new Date(item.startAt).getTime()); assert.equal(main.vibration, false);
-  assert.equal(item.notificationIds.length, 2); assert.equal(main.preAlertIds[0], pre.identifier);
+  assert.equal(item.notificationIds.length, 1); assert.equal(main.preAlertIds.length, 0);
+  const pre = { identifier: 'legacy-pre', content: { data: { itemId: item.id, alertType: 'pre-alert' } } };
   await storage.saveItem(item);
   await h.load('services/notificationResponse.ts').consumeNotificationResponse({ notification: { request: pre, date: Date.now() }, actionIdentifier: 'tap' });
   assert.equal(h.cancelled.length, 0, 'pre-alert taps must not cancel any recurrence/main alarm');
@@ -114,13 +140,13 @@ const makeItem = (overrides = {}) => ({
   const repeatedStorage = repeated.load('services/itemStorage.ts');
   const edited = makeItem();
   await Promise.all(Array.from({ length: 5 }, () => repeatedService.scheduleItemNotifications(edited, true)));
-  assert.equal(repeated.expo.size, 1, 'concurrent scheduling must leave one pre-alert');
+  assert.equal(repeated.expo.size, 0, 'concurrent scheduling must leave one pre-alert');
   assert.equal(repeated.alarms.size, 1, 'concurrent scheduling must leave one native alarm');
   edited.notificationIds = await repeatedService.scheduleItemNotifications(edited, true);
   await repeatedStorage.saveItem(edited);
   for (let i = 1; i <= 3; i++) {
     await repeatedStorage.rescheduleItem({ ...edited, startAt: new Date(Date.now() + (i + 1) * 3600000).toISOString() });
-    assert.equal(repeated.expo.size, 1);
+    assert.equal(repeated.expo.size, 0);
     assert.equal(repeated.alarms.size, 1);
     const latest = await repeatedStorage.getItemById(edited.id);
     assert.equal([...repeated.alarms.values()][0].startAt, new Date(latest.startAt).getTime());
@@ -153,6 +179,16 @@ const makeItem = (overrides = {}) => ({
   const denied = harness(); denied.setExact(false);
   await assert.rejects(denied.load('services/notificationService.ts').scheduleItemNotifications(makeItem(), true), /Alarms & reminders/);
   assert.equal(denied.expo.size, 0); assert.equal(denied.alarms.size, 0);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const item = makeItem({ id: `denied-${attempt}` });
+    item.notificationIds = await denied.load('services/notificationService.ts').scheduleItemNotifications(item);
+    assert.equal(item.notificationIds.length, 0);
+    await denied.load('services/itemStorage.ts').saveItem(item);
+    assert.ok(await denied.load('services/itemStorage.ts').getItemById(item.id), 'denied permission still allows ordinary saves');
+  }
+  assert.equal(denied.popups.length, 1, 'exact permission warning is shown once, without unavailable popups');
+  denied.setExact(true);
+  assert.equal((await denied.load('services/notificationService.ts').scheduleItemNotifications(makeItem(), true)).length, 1, 'permission is rechecked after access is granted');
   const failed = harness(); failed.setFail(true);
   await assert.rejects(failed.load('services/notificationService.ts').scheduleItemNotifications(makeItem(), true), /native failure/);
   assert.equal(failed.expo.size, 0, 'roll back pre-alert if native scheduling fails');
@@ -165,4 +201,6 @@ const makeItem = (overrides = {}) => ({
   assert.equal(saved.length, 1); assert.equal(test.alarms.size, 1);
   assert.ok(new Date(saved[0].startAt).getTime() - Date.now() > 40000);
   console.log('Native alarm integration: passed (pre-alert, no bursts, recurrence delegation, permission failure, rollback, completion, iOS, 45-second test).');
-})().catch(error => { console.error(error); process.exitCode = 1; });
+}
+module.exports = { harness, makeItem };
+if (require.main === module) run().catch(error => { console.error(error); process.exitCode = 1; });

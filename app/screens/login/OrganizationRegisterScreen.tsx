@@ -10,7 +10,6 @@ import {
   Platform,
   Pressable,
   ScrollView,
-  StatusBar,
   StyleSheet,
   Text,
   TextInput,
@@ -214,11 +213,6 @@ export default function OrganizationRegisterScreen({
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar
-        barStyle="dark-content"
-        backgroundColor="#ffffff"
-      />
-
       <KeyboardAvoidingView
         style={styles.keyboardView}
         behavior={

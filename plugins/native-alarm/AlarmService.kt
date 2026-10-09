@@ -7,6 +7,7 @@ import android.media.*
 import android.net.Uri
 import android.os.*
 import org.json.JSONObject
+import org.json.JSONArray
 
 /**
  * Native alarm foreground service.
@@ -65,6 +66,11 @@ class AlarmService : Service() {
   }
 
   fun current(): JSONObject? = alarms.values.firstOrNull()
+  fun group(): List<JSONObject> = current()?.let { first -> alarms.values.filter {
+    AlarmStore.groupSlot(it) == AlarmStore.groupSlot(first)
+  } } ?: emptyList()
+  private var ringingSlot: String? = null
+  fun dismissGroup() { group().map { it.getString("id") }.forEach { remove(it) } }
 
   override fun onCreate() {
     super.onCreate()
@@ -134,6 +140,13 @@ class AlarmService : Service() {
      * Store/replace alarm by native alarm ID.
      */
     alarms[data.getString("id")] = data
+    intent.getStringExtra("alarms")?.let { rawGroup ->
+      val group = JSONArray(rawGroup)
+      for (i in 0 until group.length()) {
+        val member = group.getJSONObject(i)
+        alarms[member.getString("id")] = member
+      }
+    }
 
     /**
      * Remove delivered Expo pre-alert notification cards for this item.
@@ -213,6 +226,7 @@ class AlarmService : Service() {
   private fun show() {
 
     val data = current() ?: return
+    val members = group()
 
     val open = activityIntent(
       data,
@@ -230,7 +244,7 @@ class AlarmService : Service() {
         this,
         AlarmReceiver::class.java
       )
-        .setAction("dismiss")
+        .setAction(if (members.size > 1) "dismiss-group" else "dismiss")
         .setData(
           Uri.parse(
             "notiva-dismiss:${Uri.encode(data.getString("id"))}"
@@ -265,11 +279,11 @@ class AlarmService : Service() {
         android.R.drawable.ic_lock_idle_alarm
       )
       .setContentTitle(
-        data.getString("title")
+        if (members.size > 1) "Group Reminder" else data.getString("title")
       )
       .setContentText(
-        if (alarms.size > 1) {
-          "${alarms.size} alarms • Tap to respond"
+        if (members.size > 1) {
+          "${members.size} items • Tap to respond"
         } else {
           data.optString(
             "description",
@@ -292,17 +306,17 @@ class AlarmService : Service() {
       .addAction(
         Notification.Action.Builder(
           null,
-          "Done",
+          if (members.size > 1) "Open" else "Done",
           activityIntent(
             data,
-            "done"
+            if (members.size > 1) "show" else "done"
           )
         ).build()
       )
       .addAction(
         Notification.Action.Builder(
           null,
-          "Dismiss",
+          if (members.size > 1) "Dismiss All" else "Dismiss",
           dismiss
         ).build()
       )
@@ -345,7 +359,10 @@ class AlarmService : Service() {
     /**
      * Actual alarm sound + vibration start here.
      */
-    if (data.getString("id") !in silenced) startRinging(
+    val slot = AlarmStore.groupSlot(data)
+    if (ringingSlot != slot && data.getString("id") !in silenced) {
+      ringingSlot = slot
+      startRinging(
       AlarmStore.alarmSound(this, data),
       data.optBoolean(
         "vibration",
@@ -353,6 +370,7 @@ class AlarmService : Service() {
       )
     )
 
+    }
     /**
      * Refresh currently visible native alarm screen.
      */
@@ -473,6 +491,7 @@ class AlarmService : Service() {
 
     val pending =
       JSONObject()
+        .put("requestedAt", System.currentTimeMillis())
         .put(
           "token",
           token
@@ -505,6 +524,7 @@ class AlarmService : Service() {
   fun remove(
     id: String
   ) {
+    val previousSlot = current()?.let { AlarmStore.groupSlot(it) }
 
     if (
       alarms.remove(id) == null
@@ -532,15 +552,14 @@ class AlarmService : Service() {
        *
        * Reset existing player/vibration and show next alarm.
        */
-      releaseRinging()
-
+      if (current()?.let { AlarmStore.groupSlot(it) } != previousSlot) releaseRinging()
       show()
     }
   }
 
   /** Silence leaves the alarm and its Done/Dismiss actions unresolved. */
   fun silenceCurrentAlarm() {
-    current()?.getString("id")?.let { silenced.add(it) }
+    group().forEach { silenced.add(it.getString("id")) }
     audio.stop()
     vibrator?.cancel()
   }
@@ -549,6 +568,7 @@ class AlarmService : Service() {
    * Fully releases alarm resources.
    */
   private fun releaseRinging() {
+    ringingSlot = null
 
     audio.stop()
 

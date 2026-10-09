@@ -1,16 +1,16 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { API_BASE_URL } from "../../../services/apiConfig";
-import { router } from "expo-router";
-import { useState } from "react";
+import { Redirect, router } from "expo-router";
+import { useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Image,
   KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
   ScrollView,
-  StatusBar,
   StyleSheet,
   Text,
   TextInput,
@@ -21,9 +21,13 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "../../../contexts/AuthContext";
 import { AuthSession } from "../../../types/auth";
 
-const headerLogo = require("../../../assets/images/notiva-logo.png");
 const popupLogo = require("../../../assets/images/Blue-logo.png");
 
+
+const COLORS = {
+  purple: "#4D3FE6", ink: "#171329", lavender: "#EFEDFF", wash: "#F7F5FF",
+  white: "#FFFFFF", muted: "#706B82", placeholder: "#827C92", border: "#E7E3F0",
+};
 
 type LoginScreenProps = {
   onUserRegister?: () => void;
@@ -34,7 +38,7 @@ export default function LoginScreen({
   onUserRegister,
   onOrganizationRegister,
 }: LoginScreenProps) {
-  const { signIn } = useAuth();
+  const { signIn, session, isLoading } = useAuth();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -49,25 +53,37 @@ export default function LoginScreen({
     setShowRegisterPopup,
   ] = useState(false);
 
+  const submittingRef = useRef(false);
+  const passwordInput = useRef<TextInput>(null);
+  const [focusedField, setFocusedField] = useState<"email" | "password" | null>(null);
+
+  const handleForgotPassword = () => {
+    router.push("/screens/login/ForgotPasswordScreen");
+  };
+
+  const handleGoogleSignIn = () => {
+    Alert.alert("Google Sign-In", "Google Sign-In will be available soon.");
+  };
+
   const handleSignIn = async () => {
+    if (submittingRef.current) return;
     const trimmedEmail = email.trim();
 
     setError("");
 
     if (!trimmedEmail || !password) {
       setError(
-        "Please enter email and password."
+        "Please enter your Notiva ID and password."
       );
 
       return;
     }
 
     if (
-      !trimmedEmail.includes("@") ||
-      !trimmedEmail.includes(".")
+      !/^[a-z0-9_.-]{4,30}$/i.test(trimmedEmail) && !/^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/.test(trimmedEmail)
     ) {
       setError(
-        "Please enter a valid email address."
+        "Enter a valid Notiva ID or your legacy email."
       );
 
       return;
@@ -81,6 +97,7 @@ export default function LoginScreen({
       return;
     }
 
+    submittingRef.current = true;
     try {
       setSubmitting(true);
 
@@ -94,24 +111,26 @@ export default function LoginScreen({
           },
 
           body: JSON.stringify({
-            email: trimmedEmail,
+            identifier: trimmedEmail.toLowerCase(),
             password,
           }),
         }
       );
 
-      const data = await response.json();
-
       if (!response.ok) {
-        throw new Error(
-          data?.message || "Login failed."
-        );
+        // Use local messages; server bodies may contain internal diagnostics.
+        setError(response.status === 401
+          ? "Invalid Notiva ID or password."
+          : "Unable to log in right now. Please try again.");
+        return;
       }
 
+      const data = await response.json();
+
       if (
-        !data?.token ||
-        !data?.user?.id ||
-        !data?.user?.fullName
+        typeof data?.token !== "string" || !data.token.trim() ||
+        typeof data?.user?.id !== "string" || !data.user.id.trim() ||
+        typeof data?.user?.fullName !== "string" || !data.user.fullName.trim()
       ) {
         throw new Error(
           "Login response is missing session information."
@@ -125,13 +144,11 @@ export default function LoginScreen({
 
       router.replace("/(tabs)");
     } catch (loginError) {
-      const message =
-        loginError instanceof Error
-          ? loginError.message
-          : "Unable to login. Please try again.";
-
-      setError(message);
+      setError(loginError instanceof TypeError
+        ? "Unable to connect. Check your connection and try again."
+        : "Unable to log in right now. Please try again.");
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };
@@ -148,13 +165,12 @@ export default function LoginScreen({
     onOrganizationRegister?.();
   };
 
+  if (isLoading) return null;
+  if (session) return <Redirect href="/(tabs)" />;
+  if (!onUserRegister && !onOrganizationRegister) return <Redirect href="/" />;
+
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar
-        barStyle="light-content"
-        backgroundColor="#4d3fe6"
-      />
-
       <KeyboardAvoidingView
         style={styles.screen}
         behavior={
@@ -162,240 +178,129 @@ export default function LoginScreen({
             ? "padding"
             : "height"
         }
-        keyboardVerticalOffset={
-          Platform.OS === "ios"
-            ? 0
-            : 20
-        }
+        keyboardVerticalOffset={0}
       >
         <ScrollView
-          contentContainerStyle={
-            styles.scrollContent
-          }
+          contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
         >
-          {/* Purple header */}
-          <View style={styles.purpleSection}>
-            <View style={styles.logoWrap}>
-              <Image
-                source={headerLogo}
-                resizeMode="contain"
-                style={styles.logo}
-              />
+          <View style={styles.heading}>
+            <View pointerEvents="none" accessible={false} style={styles.brandAccent} />
+            <View style={styles.brandRow} accessibilityLabel="Notiva">
+              <View style={styles.brandMark}>
+                <Image source={popupLogo} resizeMode="contain" style={styles.brandLogo} accessible={false} />
+              </View>
+              <Text style={styles.brandName}>Notiva</Text>
             </View>
-
-            <Text
-              allowFontScaling={false}
-              style={styles.welcomeText}
-            >
-              Welcome back
-            </Text>
-
-            <Text
-              allowFontScaling={false}
-              style={styles.welcomeSubtext}
-            >
-              Sign in and stay on top of what matters
-            </Text>
+            <Text accessibilityRole="header" style={styles.welcomeText}>Welcome back</Text>
+            <Text style={styles.welcomeSubtext}>Sign in to continue to Notiva</Text>
           </View>
 
-          {/* Form */}
           <View style={styles.formSection}>
-            <Text style={styles.formTitle}>
-              Sign in
-            </Text>
-
-            <Text style={styles.helperText}>
-              Enter your account details to continue
-            </Text>
-
-            {/* Email */}
-            <Text
-              allowFontScaling={false}
-              style={styles.label}
-            >
-              Email Address
-            </Text>
-
-            <View style={styles.inputBox}>
-              <View style={styles.inputIcon}>
-                <Ionicons
-                  name="mail-outline"
-                  size={19}
-                  color="#4d3fe6"
-                />
-              </View>
-
+            <Text style={styles.label}>Notiva ID</Text>
+            <View style={[styles.inputBox, focusedField === "email" && styles.inputFocused]}>
+              <Ionicons name="mail-outline" size={20} color={focusedField === "email" ? COLORS.purple : COLORS.muted} />
               <TextInput
+                accessibilityLabel="Notiva ID"
                 style={styles.input}
-                placeholder="john.e01@gmail.com"
-                placeholderTextColor="#9ca3af"
-                keyboardType="email-address"
+                placeholder="Enter your Notiva ID"
+                placeholderTextColor={COLORS.placeholder}
+                keyboardType="default"
                 autoCapitalize="none"
                 autoCorrect={false}
+                autoComplete="username"
+                textContentType="username"
+                selectionColor={COLORS.purple}
+                editable={!submitting}
                 value={email}
-                onChangeText={(text) => {
-                  setEmail(text);
-                  setError("");
-                }}
+                onChangeText={text => { setEmail(text); setError(""); }}
+                onFocus={() => setFocusedField("email")}
+                onBlur={() => setFocusedField(null)}
                 returnKeyType="next"
+                submitBehavior="submit"
+                onSubmitEditing={() => passwordInput.current?.focus()}
               />
             </View>
 
-            {/* Password */}
-            <Text
-              allowFontScaling={false}
-              style={styles.label}
-            >
-              Password
-            </Text>
-
-            <View style={styles.inputBox}>
-              <View style={styles.inputIcon}>
-                <Ionicons
-                  name="lock-closed-outline"
-                  size={19}
-                  color="#4d3fe6"
-                />
-              </View>
-
+            <Text style={styles.label}>Existing users can still use their old email.</Text>
+            <Text style={styles.label}>Password</Text>
+            <View style={[styles.inputBox, focusedField === "password" && styles.inputFocused]}>
+              <Ionicons name="lock-closed-outline" size={20} color={focusedField === "password" ? COLORS.purple : COLORS.muted} />
               <TextInput
+                ref={passwordInput}
+                accessibilityLabel="Password"
                 style={styles.input}
                 placeholder="Enter your password"
-                placeholderTextColor="#9ca3af"
+                placeholderTextColor={COLORS.placeholder}
                 secureTextEntry={!showPassword}
                 autoCapitalize="none"
                 autoCorrect={false}
+                autoComplete="current-password"
+                textContentType="password"
+                selectionColor={COLORS.purple}
+                editable={!submitting}
                 value={password}
-                onChangeText={(text) => {
-                  setPassword(text);
-                  setError("");
-                }}
-                returnKeyType="done"
+                onChangeText={text => { setPassword(text); setError(""); }}
+                onFocus={() => setFocusedField("password")}
+                onBlur={() => setFocusedField(null)}
+                returnKeyType="go"
                 onSubmitEditing={handleSignIn}
               />
-
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={
-                  showPassword
-                    ? "Hide password"
-                    : "Show password"
-                }
-                hitSlop={8}
+                accessibilityLabel={showPassword ? "Hide password" : "Show password"}
+                accessibilityState={{ checked: showPassword }}
                 style={styles.eyeButton}
-                onPress={() =>
-                  setShowPassword(
-                    (previous) =>
-                      !previous
-                  )
-                }
+                onPress={() => setShowPassword(previous => !previous)}
               >
-                <Ionicons
-                  name={
-                    showPassword
-                      ? "eye-off-outline"
-                      : "eye-outline"
-                  }
-                  size={20}
-                  color="#7c818d"
-                />
+                <Ionicons name={showPassword ? "eye-off-outline" : "eye-outline"} size={21} color={COLORS.muted} />
               </Pressable>
             </View>
-
-            {/* Error */}
-            {error ? (
-              <View style={styles.errorBox}>
-                <Ionicons
-                  name="alert-circle-outline"
-                  size={17}
-                  color="#dc2626"
-                />
-
-                <Text style={styles.errorText}>
-                  {error}
-                </Text>
-              </View>
-            ) : null}
-
-            {/* Forgot password */}
             <View style={styles.forgotRow}>
-              <Pressable
-                style={styles.forgotButton}
-              >
-                <Text
-                  allowFontScaling={false}
-                  style={styles.forgotText}
-                >
-                  Forgot Password?
-                </Text>
+              <Pressable accessibilityRole="button" onPress={handleForgotPassword} style={styles.forgotButton}>
+                <Text style={styles.forgotText}>Forgot Password?</Text>
               </Pressable>
             </View>
 
-            {/* Sign in */}
+            {error ? <View style={styles.errorBox} accessibilityRole="alert" accessibilityLiveRegion="polite">
+              <Ionicons name="alert-circle-outline" size={19} color="#B4233A" />
+              <Text style={styles.errorText}>{error}</Text>
+            </View> : null}
+
             <Pressable
               accessibilityRole="button"
+              accessibilityLabel={submitting ? "Logging in" : "Log In"}
+              accessibilityState={{ disabled: submitting, busy: submitting }}
               disabled={submitting}
-              style={({ pressed }) => [
-                styles.signInButton,
-
-                pressed &&
-                  !submitting &&
-                  styles.buttonPressed,
-
-                submitting &&
-                  styles.signInButtonDisabled,
-              ]}
+              style={({ pressed }) => [styles.signInButton, pressed && styles.buttonPressed, submitting && styles.buttonDisabled]}
               onPress={handleSignIn}
             >
-              {submitting ? (
-                <ActivityIndicator
-                  color="#ffffff"
-                />
-              ) : (
-                <>
-                  <Text
-                    allowFontScaling={false}
-                    style={styles.signInText}
-                  >
-                    Sign in
-                  </Text>
-
-                  <Ionicons
-                    name="arrow-forward"
-                    size={19}
-                    color="#ffffff"
-                  />
-                </>
-              )}
+              {submitting && <ActivityIndicator color="#FFFFFF" />}
+              <Text style={styles.signInText}>{submitting ? "Logging in…" : "Log In"}</Text>
+              {!submitting && <Ionicons name="arrow-forward" size={20} color="#FFFFFF" />}
             </Pressable>
 
-            {/* Register */}
-            <View style={styles.registerRow}>
-              <Text
-                allowFontScaling={false}
-                style={styles.accountText}
-              >
-                Don&apos;t have an account?
-              </Text>
-
-              <Pressable
-                hitSlop={8}
-                onPress={() =>
-                  setShowRegisterPopup(
-                    true
-                  )
-                }
-              >
-                <Text
-                  allowFontScaling={false}
-                  style={styles.registerText}
-                >
-                  Register
-                </Text>
-              </Pressable>
+            <View style={styles.divider}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>or continue with</Text>
+              <View style={styles.dividerLine} />
             </View>
+            <Pressable accessibilityRole="button" disabled={submitting}
+              accessibilityState={{ disabled: submitting }} onPress={handleGoogleSignIn}
+              style={({ pressed }) => [styles.googleButton, pressed && styles.buttonPressed, submitting && styles.buttonDisabled]}>
+              <Ionicons name="logo-google" size={21} color={COLORS.ink} />
+              <Text style={styles.googleText}>Continue with Google</Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.registerRow}>
+            <Text style={styles.accountText}>Don&apos;t have an account?</Text>
+            <Pressable accessibilityRole="button" style={styles.registerButton} disabled={submitting}
+              onPress={() => setShowRegisterPopup(true)}>
+              <Text style={styles.registerText}>Create account</Text>
+            </Pressable>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -461,6 +366,7 @@ export default function LoginScreen({
             </Text>
 
             <Pressable
+              accessibilityRole="button"
               style={({ pressed }) => [
                 styles.modalOption,
 
@@ -503,6 +409,7 @@ export default function LoginScreen({
             </Pressable>
 
             <Pressable
+              accessibilityRole="button"
               style={({ pressed }) => [
                 styles.modalOption,
 
@@ -553,301 +460,56 @@ export default function LoginScreen({
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: "#4d3fe6",
-  },
-
-  screen: {
-    flex: 1,
-    backgroundColor: "#ffffff",
-  },
-
+  safeArea: { flex: 1, backgroundColor: COLORS.white },
+  screen: { flex: 1 },
   scrollContent: {
-    flexGrow: 1,
-    backgroundColor: "#ffffff",
+    flexGrow: 1, justifyContent: "center", width: "100%", maxWidth: 440,
+    alignSelf: "center", paddingHorizontal: 28, paddingVertical: 28,
   },
-
-  purpleSection: {
-    minHeight: 250,
-
-    backgroundColor: "#4d3fe6",
-
-    alignItems: "center",
-    justifyContent: "center",
-
-    paddingHorizontal: 24,
-    paddingTop: 28,
-    paddingBottom: 55,
+  heading: { paddingTop: 12, paddingBottom: 30, position: "relative" },
+  brandAccent: {
+    position: "absolute", width: 116, height: 116, borderRadius: 58,
+    right: -28, top: -28, backgroundColor: COLORS.wash,
   },
-
-  logoWrap: {
-    minWidth: 120,
-    height: 64,
-
-    alignItems: "center",
-    justifyContent: "center",
-
-    marginBottom: 20,
-  },
-
-  logo: {
-    width: 150,
-    height: 58,
-  },
-
-  welcomeText: {
-    color: "#ffffff",
-
-    fontSize: 29,
-    lineHeight: 35,
-
-    fontWeight: "900",
-
-    textAlign: "center",
-  },
-
-  welcomeSubtext: {
-    color: "#d8d5ff",
-
-    fontSize: 12,
-    lineHeight: 18,
-
-    fontWeight: "600",
-
-    textAlign: "center",
-
-    marginTop: 7,
-
-    maxWidth: 270,
-  },
-
-  formSection: {
-    flexGrow: 1,
-
-    marginTop: -28,
-
-    backgroundColor: "#ffffff",
-
-    borderTopLeftRadius: 30,
-    borderTopRightRadius: 30,
-
-    paddingHorizontal: 20,
-    paddingTop: 28,
-    paddingBottom: 32,
-  },
-
-  formTitle: {
-    color: "#171329",
-
-    fontSize: 22,
-    lineHeight: 28,
-
-    fontWeight: "900",
-  },
-
-  helperText: {
-    color: "#8b8f9c",
-
-    fontSize: 12,
-    lineHeight: 18,
-
-    fontWeight: "600",
-
-    marginTop: 4,
-    marginBottom: 24,
-  },
-
-  label: {
-    color: "#374151",
-
-    fontSize: 12,
-    lineHeight: 17,
-
-    fontWeight: "800",
-
-    marginBottom: 7,
-  },
-
+  brandRow: { flexDirection: "row", alignItems: "center", gap: 11, marginBottom: 30 },
+  brandMark: { width: 46, height: 46, borderRadius: 15, backgroundColor: COLORS.lavender, alignItems: "center", justifyContent: "center" },
+  brandLogo: { width: 26, height: 31 },
+  brandName: { color: COLORS.ink, fontSize: 23, fontWeight: "800", letterSpacing: -0.6 },
+  welcomeText: { color: COLORS.ink, fontSize: 34, fontWeight: "700", letterSpacing: -1.1, lineHeight: 42 },
+  welcomeSubtext: { color: COLORS.muted, fontSize: 15, lineHeight: 23, marginTop: 7 },
+  formSection: { width: "100%" },
+  label: { color: COLORS.ink, fontSize: 13, fontWeight: "600", marginBottom: 9 },
   inputBox: {
-    width: "100%",
-    minHeight: 54,
-
-    backgroundColor: "#fafaff",
-
-    borderRadius: 14,
-
-    borderWidth: 1,
-    borderColor: "#deddf0",
-
-    flexDirection: "row",
-    alignItems: "center",
-
-    paddingHorizontal: 11,
-
-    marginBottom: 17,
+    flexDirection: "row", alignItems: "center", minHeight: 58, borderRadius: 16,
+    borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.wash,
+    paddingLeft: 16, paddingRight: 6, marginBottom: 20, gap: 12,
   },
-
-  inputIcon: {
-    width: 34,
-    height: 34,
-
-    borderRadius: 10,
-
-    backgroundColor: "#efedff",
-
-    alignItems: "center",
-    justifyContent: "center",
-
-    marginRight: 8,
-  },
-
-  input: {
-    flex: 1,
-
-    minHeight: 52,
-
-    color: "#111827",
-
-    fontSize: 14,
-
-    paddingVertical: 0,
-  },
-
-  eyeButton: {
-    width: 36,
-    height: 36,
-
-    alignItems: "center",
-    justifyContent: "center",
-
-    marginLeft: 4,
-  },
-
-  errorBox: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-
-    gap: 7,
-
-    backgroundColor: "#fef2f2",
-
-    borderWidth: 1,
-    borderColor: "#fecaca",
-
-    borderRadius: 11,
-
-    paddingHorizontal: 11,
-    paddingVertical: 9,
-
-    marginBottom: 12,
-  },
-
-  errorText: {
-    flex: 1,
-
-    color: "#dc2626",
-
-    fontSize: 11,
-    lineHeight: 17,
-
-    fontWeight: "700",
-  },
-
-  forgotRow: {
-    alignItems: "flex-end",
-
-    marginTop: -3,
-    marginBottom: 22,
-  },
-
-  forgotButton: {
-    paddingVertical: 3,
-  },
-
-  forgotText: {
-    color: "#4d3fe6",
-
-    fontSize: 12,
-
-    fontWeight: "800",
-  },
-
+  inputFocused: { borderColor: COLORS.purple, backgroundColor: COLORS.white },
+  input: { flex: 1, minWidth: 0, minHeight: 56, paddingVertical: 14, color: COLORS.ink, fontSize: 15 },
+  eyeButton: { width: 44, minHeight: 48, alignItems: "center", justifyContent: "center" },
+  forgotRow: { alignItems: "flex-end", marginTop: -17, marginBottom: 16 },
+  forgotButton: { minHeight: 44, justifyContent: "center", paddingLeft: 12 },
+  forgotText: { color: COLORS.purple, fontSize: 13, fontWeight: "600" },
+  errorBox: { flexDirection: "row", alignItems: "flex-start", gap: 9, padding: 13, borderRadius: 12, backgroundColor: "#FFF1F3", marginBottom: 16 },
+  errorText: { flex: 1, color: "#B4233A", fontSize: 13, lineHeight: 20 },
   signInButton: {
-    width: "100%",
-    minHeight: 54,
-
-    backgroundColor: "#4d3fe6",
-
-    borderRadius: 14,
-
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-
-    gap: 8,
-
-    shadowColor: "#4d3fe6",
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
-
-    elevation: 3,
-
-    marginBottom: 20,
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10,
+    minHeight: 56, paddingHorizontal: 20, paddingVertical: 15, borderRadius: 16, backgroundColor: COLORS.purple,
   },
-
-  buttonPressed: {
-    opacity: 0.86,
-
-    transform: [
-      {
-        scale: 0.99,
-      },
-    ],
-  },
-
-  signInButtonDisabled: {
-    opacity: 0.65,
-  },
-
-  signInText: {
-    color: "#ffffff",
-
-    fontSize: 15,
-
-    fontWeight: "900",
-  },
-
-  registerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-
-    flexWrap: "wrap",
-
-    gap: 5,
-  },
-
-  accountText: {
-    color: "#6b7280",
-
-    fontSize: 12,
-
-    fontWeight: "600",
-  },
-
-  registerText: {
-    color: "#4d3fe6",
-
-    fontSize: 12,
-
-    fontWeight: "900",
-  },
+  signInText: { color: COLORS.white, fontSize: 16, fontWeight: "700" },
+  buttonPressed: { opacity: 0.8 },
+  buttonDisabled: { opacity: 0.65 },
+  divider: { flexDirection: "row", alignItems: "center", gap: 14, marginVertical: 24 },
+  dividerLine: { flex: 1, height: 1, backgroundColor: COLORS.border },
+  dividerText: { color: COLORS.muted, fontSize: 12 },
+  googleButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 12,
+    minHeight: 56, paddingVertical: 14, paddingHorizontal: 16, borderRadius: 16,
+    borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.white },
+  googleText: { color: COLORS.ink, fontSize: 15, fontWeight: "600", flexShrink: 1 },
+  registerRow: { flexDirection: "row", justifyContent: "center", alignItems: "center", flexWrap: "wrap", columnGap: 5, marginTop: 26 },
+  accountText: { color: COLORS.muted, fontSize: 13 },
+  registerButton: { minHeight: 44, justifyContent: "center" },
+  registerText: { color: COLORS.purple, fontSize: 13, fontWeight: "700" },
 
   modalOverlay: {
     flex: 1,

@@ -32,6 +32,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import ReminderCard from "../../components/home/ReminderCard";
 import {
   getItems,
+  subscribeItemRestore,
   deleteItem,
   toggleComplete,
 } from "../../services/itemStorage";
@@ -328,6 +329,7 @@ export default function RemindersScreen() {
         };
 
       void load();
+      const stopRestore = subscribeItemRestore(() => { void load(); });
 
       const timer =
         setInterval(() => {
@@ -347,6 +349,7 @@ export default function RemindersScreen() {
       return () => {
         active = false;
         clearInterval(timer);
+        stopRestore();
       };
     }, [])
   );

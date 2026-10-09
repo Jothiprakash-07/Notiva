@@ -47,6 +47,7 @@
         }
       ],
 
+      "./plugins/withNeutralPickers",
       [
         "@react-native-community/datetimepicker",
         {

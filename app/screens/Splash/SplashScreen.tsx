@@ -2,7 +2,6 @@ import { useEffect, useRef } from "react";
 import {
   Animated,
   Image,
-  StatusBar,
   StyleSheet,
   Text,
   View,
@@ -106,11 +105,6 @@ export default function SplashScreen({
         "right",
       ]}
     >
-      <StatusBar
-        barStyle="light-content"
-        backgroundColor="#4d3fe6"
-      />
-
       <View style={styles.screen}>
         {/* Decorative shapes */}
         <View

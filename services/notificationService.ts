@@ -1,4 +1,5 @@
 import * as Notifications from "expo-notifications";
+import { accountAlarmId, getItemAccount } from "./itemAccount";
 import { normalizeAlarmSound, type AlarmSound } from "./alarmSounds";
 import { nativeAlarm, NATIVE_ALARM_PREFIX, scheduleNativeAlarm, syncNativeAlarmSound } from "./nativeAlarm";
 import {
@@ -85,6 +86,7 @@ let requestedThisSession =
 let explainedExactAlarmAccess =
   false;
 let explainedFullScreenAccess = false;
+let explainedNotificationAccess = false;
 
 /* =========================================================
  * DEBUG
@@ -96,7 +98,13 @@ function debug(
   if (__DEV__) {
     console.log(
       "[Notification]",
-      values
+      // Never include item content, IDs, channel objects, or raw OS requests.
+      Object.fromEntries(Object.entries(values).filter(([key]) => [
+        "currentTime", "scheduledCount", "missingCount", "alertType", "scheduledFor",
+        "permissionStatus", "iosStatus", "type", "startAt", "mainAlert",
+        "alertBeforeMinutes", "preAlert", "repeat", "burstNotifications",
+        "preAlertsEnabled", "preChannelImportance", "preChannelHasSound",
+      ].includes(key)))
     );
   }
 }
@@ -129,13 +137,7 @@ async function verifyScheduledNotifications(
       scheduledCount:
         scheduled.length,
 
-      notificationIds:
-        ids,
-
-      missingIds,
-
-      scheduledNotifications:
-        scheduled,
+      missingCount: missingIds.length,
     });
 
     if (
@@ -144,13 +146,12 @@ async function verifyScheduledNotifications(
     ) {
       console.warn(
         "[Notification] Scheduled IDs absent from OS queue:",
-        missingIds
+        missingIds.length
       );
     }
-  } catch (error) {
+  } catch {
     console.warn(
-      "[Notification] Could not verify OS queue:",
-      error
+      "[Notification] Could not verify OS queue."
     );
   }
 }
@@ -197,6 +198,8 @@ export function getNotificationSettings(): Promise<NotificationSettings> {
   return settingsOperation(async () => {
     const settings = await readNotificationSettings();
     await syncNativeAlarmSound(settings.alarmSound);
+    if (Platform.OS === "android") await nativeAlarm().setPreAlertSettings?.(settings.preAlerts, settings.vibration);
+    debug({ preAlertsEnabled: settings.preAlerts });
     return settings;
   });
 }
@@ -314,6 +317,7 @@ async function persistNotificationSettings(
 
   file.write(raw);
   await syncNativeAlarmSound(safeSettings.alarmSound);
+  if (Platform.OS === "android") await nativeAlarm().setPreAlertSettings?.(safeSettings.preAlerts, safeSettings.vibration);
 
   if (
     Platform.OS ===
@@ -567,10 +571,15 @@ export async function prepareNotifications(): Promise<boolean> {
     if (
       !permission.granted
     ) {
-      disabledMessage();
+      if (!explainedNotificationAccess) {
+        explainedNotificationAccess = true;
+        disabledMessage();
+      }
 
       return false;
     }
+
+    explainedNotificationAccess = false;
 
     if (
       Platform.OS ===
@@ -581,14 +590,9 @@ export async function prepareNotifications(): Promise<boolean> {
           PRE_ALERT_CHANNEL_ID
         );
 
-      const mainChannel =
-        await Notifications.getNotificationChannelAsync(
-          MAIN_ALERT_CHANNEL_ID
-        );
-
       debug({
-        preChannel,
-        mainChannel,
+        preChannelImportance: preChannel?.importance,
+        preChannelHasSound: preChannel?.sound != null,
       });
 
       if (
@@ -614,37 +618,25 @@ export async function prepareNotifications(): Promise<boolean> {
      */
     if (
       Platform.OS ===
-        "android" &&
-      Number(
-        Platform.Version
-      ) >= 31 &&
-      !explainedExactAlarmAccess
-      && !(await nativeAlarm().canSchedule())
+        "android" && !(await nativeAlarm().canSchedule())
     ) {
-      explainedExactAlarmAccess =
-        true;
-
-      Alert.alert(
-        "Allow precise reminder timing",
-        "Check Settings → Apps → Special app access → Alarms & reminders → Notiva. Allow access so reminder alerts can run at the selected time.",
-        [
-          {
-            text:
-              "Continue",
-
-            style:
-              "cancel",
-          },
-          {
-            text:
-              "Open settings",
-
-            onPress: () => {
-              void openExactAlarmSettings();
+      if (!explainedExactAlarmAccess) {
+        explainedExactAlarmAccess = true;
+        Alert.alert(
+          "Allow precise reminder timing",
+          "Check Settings → Apps → Special app access → Alarms & reminders → Notiva. Allow access so reminder alerts can run at the selected time. The item can be saved without alerts; edit it to try again.",
+          [
+            { text: "Continue", style: "cancel" },
+            {
+              text: "Open settings",
+              onPress: () => { void openExactAlarmSettings(); },
             },
-          },
-        ]
-      );
+          ]
+        );
+      }
+      // Permission is checked only during scheduling. Ordinary saves may
+      // continue without alerts; avoid a second/repeated unavailable popup.
+      return false;
     }
 
     if (Platform.OS === "android" && !explainedFullScreenAccess && !(await nativeAlarm().canFullScreen())) {
@@ -892,6 +884,19 @@ function createMainAlertContent(
  * ONE-TIME SCHEDULING
  * ========================================================= */
 
+async function scheduleExpoNotification(request: Notifications.NotificationRequestInput): Promise<string> {
+  try {
+    const id = await Notifications.scheduleNotificationAsync(request);
+    if (typeof id !== "string" || !id.trim() || id.startsWith(NATIVE_ALARM_PREFIX)) {
+      throw new Error("Missing Expo notification identifier.");
+    }
+    return id;
+  } catch {
+    if (__DEV__) console.warn("[Notification] Expo scheduling failed or returned an invalid identifier.");
+    throw new Error("Could not schedule the notification. Check notification settings and try again.");
+  }
+}
+
 function scheduleDateNotification(content: Notifications.NotificationContentInput, date: Date, channelId: string): Promise<string>;
 function scheduleDateNotification(content: Notifications.NotificationContentInput, date: Date, channelId: string, skipExpired: true): Promise<string | undefined>;
 async function scheduleDateNotification(
@@ -920,7 +925,7 @@ async function scheduleDateNotification(
     );
   }
 
-  return Notifications.scheduleNotificationAsync(
+  return scheduleExpoNotification(
     {
       content,
 
@@ -1113,19 +1118,14 @@ function recurringTriggerForDate(
         },
       ];
 
-    case "weekly":
-      return [
-        {
-          type:
-            types.WEEKLY,
-
-          weekday:
-            date.getDay() +
-            1,
-
-          ...time,
-        },
-      ];
+    case "weekly": {
+      const start = new Date(item.startAt);
+      const shift = Math.round((Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) -
+        Date.UTC(start.getFullYear(), start.getMonth(), start.getDate())) / 86_400_000);
+      return (item.weeklyDays ?? [start.getDay()]).map(day => ({
+        type: types.WEEKLY, weekday: ((day + shift) % 7 + 7) % 7 + 1, ...time,
+      }));
+    }
 
     case "weekdays": {
       const start =
@@ -1243,6 +1243,12 @@ async function scheduleRecurringNotifications(
   item: ReminderItem,
   ids: string[]
 ): Promise<string[]> {
+  // Durable Android Daily/Weekly/Weekdays series own their dated main/pre-alert pair.
+  // Other repeat modes keep the existing Expo/native scheduling path.
+  if (Platform.OS === "android" && ["daily", "weekly", "weekdays"].includes(item.repeat) && item.dailySeries) {
+    ids.push(await scheduleNativeAlarm(item, await getNotificationSettings(), []));
+    return ids;
+  }
   const preDate =
     notificationDateFor(
       item
@@ -1289,7 +1295,7 @@ async function scheduleRecurringNotifications(
       }
 
       const id =
-        await Notifications.scheduleNotificationAsync(
+        await scheduleExpoNotification(
           {
             content:
               createPreAlertContent(
@@ -1362,7 +1368,7 @@ async function scheduleRecurringNotifications(
     }
 
     const id =
-      await Notifications.scheduleNotificationAsync(
+      await scheduleExpoNotification(
         {
           content:
             createMainAlertContent(
@@ -1404,7 +1410,10 @@ async function scheduleRecurringNotifications(
 
 const schedulingItems = new Map<string, Promise<string[]>>();
 
-export function scheduleItemNotifications(item: ReminderItem, requireSuccess = false): Promise<string[]> {
+export function scheduleItemNotifications(item: ReminderItem, requireSuccess = false, account = getItemAccount()): Promise<string[]> {
+  if (account) item = { ...item, id: accountAlarmId(item.id, account),
+    seriesId: item.seriesId ? accountAlarmId(item.seriesId, account) : undefined,
+    dailySeries: item.dailySeries ? { ...item.dailySeries, templateId: accountAlarmId(item.dailySeries.templateId, account) } : undefined };
   const previous = schedulingItems.get(item.id) ?? Promise.resolve([]);
   const next = previous.catch(() => []).then(() => scheduleItemNotificationsOnce(item, requireSuccess));
   schedulingItems.set(item.id, next);
@@ -1444,7 +1453,9 @@ async function scheduleItemNotificationsOnce(
         requireSuccess
       ) {
         throw new Error(
-          "Enable notifications before scheduling this item."
+          Platform.OS === "android"
+            ? "Enable notifications and Alarms & reminders access before scheduling this item."
+            : "Enable notifications before scheduling this item."
         );
       }
 
@@ -1461,6 +1472,13 @@ async function scheduleItemNotificationsOnce(
       const scheduled = await Notifications.getAllScheduledNotificationsAsync();
       await Promise.all(scheduled.filter(request => request.content.data?.itemId === item.id)
         .map(request => Notifications.cancelScheduledNotificationAsync(request.identifier)));
+      // Android owns the pre/main pair, including recurrence and reboot recovery.
+      // Expo remains the iOS scheduler and Android permission/channel helper only.
+      if ((!item.repeat || item.repeat === "none") && new Date(item.startAt).getTime() <= Date.now()) {
+        throw new Error("Choose a future reminder time.");
+      }
+      ids.push(await scheduleNativeAlarm(item, await getNotificationSettings(), []));
+      return ids;
     }
 
     const preAlertDate =
@@ -1630,7 +1648,7 @@ export async function scheduleTestNotification(): Promise<
       );
 
     const id =
-      await Notifications.scheduleNotificationAsync(
+      await scheduleExpoNotification(
         {
           content: {
             title:

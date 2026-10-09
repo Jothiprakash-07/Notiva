@@ -1,0 +1,6 @@
+gradle.beforeProject { app ->
+    app.plugins.withId('com.android.application') {
+        app.android.defaultConfig.testInstrumentationRunner = 'com.notiva.alarm.PreAlertDeviceTest'
+        app.android.sourceSets.androidTest.java.srcDir(new File(app.rootProject.projectDir, '../scripts/native-device'))
+    }
+}

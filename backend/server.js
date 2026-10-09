@@ -4,6 +4,10 @@ import cors from "cors";
 import dotenv from "dotenv";
 
 import authRoutes from "./routes/authRoutes.js";
+import itemRoutes, { itemRequestError } from "./routes/itemRoutes.js";
+import { prepareItemIndexes, prepareDeletedItemIndexes } from "./services/itemIndexes.js";
+import { startCleanupScheduler } from "./services/cleanupScheduler.js";
+import { prepareIdentityIndexes } from "./services/identityMigration.js";
 
 dotenv.config();
 
@@ -25,12 +29,18 @@ app.get("/", (req, res) => {
 
 // Auth API
 app.use("/api/auth", authRoutes);
+app.use("/api/items", itemRoutes);
+app.use(itemRequestError);
 
 const PORT = process.env.PORT || 5000;
 
 mongoose
   .connect(process.env.MONGO_URI)
-  .then(() => {
+  .then(async () => {
+    await prepareIdentityIndexes();
+    await prepareItemIndexes();
+    await prepareDeletedItemIndexes();
+    startCleanupScheduler();
     console.log("MongoDB connected");
 
     app.listen(PORT, "0.0.0.0", () => {

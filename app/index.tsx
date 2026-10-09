@@ -1,7 +1,8 @@
 import { router } from "expo-router";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { useAuth } from "../contexts/AuthContext";
+import { getOnboardingCompleted } from "../services/onboardingStorage";
 
 import SplashScreen from "./screens/Splash/SplashScreen";
 import OnboardingScreen from "./screens/Onboarding/OnboardingScreen";
@@ -25,6 +26,16 @@ export default function Index() {
   const [splashFinished, setSplashFinished] =
     useState(false);
 
+  const [onboardingCompleted, setCompleted] = useState<boolean | null>(null);
+  const finishSplash = useCallback(() => setSplashFinished(true), []);
+
+  useEffect(() => {
+    let active = true;
+    getOnboardingCompleted().then(value => { if (active) setCompleted(value); })
+      .catch(() => { if (active) setCompleted(false); });
+    return () => { active = false; };
+  }, []);
+
   useEffect(() => {
     if (!splashFinished) {
       return;
@@ -39,19 +50,19 @@ export default function Index() {
       return;
     }
 
-    setScreen("login");
+    if (onboardingCompleted === null) return;
+    setScreen(onboardingCompleted ? "login" : "onboarding");
   }, [
     splashFinished,
     isLoading,
     session,
+    onboardingCompleted,
   ]);
 
   if (screen === "splash") {
     return (
       <SplashScreen
-        onFinish={() => {
-          setSplashFinished(true);
-        }}
+        onFinish={finishSplash}
       />
     );
   }
@@ -60,6 +71,7 @@ export default function Index() {
     return (
       <OnboardingScreen
         onFinish={() => {
+          setCompleted(true);
           setScreen("login");
         }}
       />

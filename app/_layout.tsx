@@ -1,6 +1,7 @@
 import "../services/notificationService";
 import "react-native-reanimated";
 import NativeAlarmCompletion from "../components/common/NativeAlarmCompletion";
+import AppStatusBar from "../components/common/AppStatusBar";
 
 import {
   DarkTheme,
@@ -9,7 +10,7 @@ import {
 } from "@react-navigation/native";
 
 import * as Notifications from "expo-notifications";
-import { AppState, Platform } from "react-native";
+import { AppState, Platform, View } from "react-native";
 import { recordNotification } from "../services/notificationHistory";
 
 import {
@@ -24,25 +25,33 @@ import {
   useState,
 } from "react";
 
-import { StatusBar } from "expo-status-bar";
-
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { getNotificationSettings } from "../services/notificationService";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 
 import { consumeNotificationResponse, notificationResponseKey } from "../services/notificationResponse";
+import { startItemSyncRuntime } from "../services/itemSyncRuntime";
 
 export default function RootLayout() {
-  return <AuthProvider><RootNavigation /></AuthProvider>;
+  return <AuthProvider><View style={{ flex: 1 }}>
+    <RootNavigation />
+    <AppStatusBar />
+  </View></AuthProvider>;
 }
 
 function RootNavigation() {
   const { session, isLoading } = useAuth();
+  const itemUserId = session?.user.id;
+  const itemToken = session?.token;
+  useEffect(() => {
+    if (isLoading || !itemUserId || !itemToken) return;
+    return startItemSyncRuntime();
+  }, [isLoading, itemToken, itemUserId]);
   const colorScheme =
     useColorScheme();
 
   const navigation = useRootNavigationState();
-  const [pending, setPending] = useState<{ itemId: string; responseKey: string }>();
+  const [pending, setPending] = useState<{ itemId: string; responseKey: string; userId: string }>();
   const responseSequence = useRef(0);
   const received = useRef(new Set<string>());
 
@@ -69,28 +78,31 @@ function RootNavigation() {
   }, []);
 
   useEffect(() => {
-    if (Platform.OS === "web") return;
+    if (Platform.OS === "web" || isLoading || !itemUserId) return;
+    let active = true;
     const handle = async (response: Notifications.NotificationResponse) => {
+      if (!active) return;
       const itemId = response.notification.request.content.data?.itemId;
       if (typeof itemId !== "string" || !itemId.trim()) return;
-      const key = notificationResponseKey(response);
+      const key = `${itemUserId}:${notificationResponseKey(response)}`;
       if (received.current.has(key)) return;
       received.current.add(key);
       const sequence = ++responseSequence.current;
       const target = await consumeNotificationResponse(response);
-      if (target && sequence === responseSequence.current) setPending(target);
+      if (active && target && sequence === responseSequence.current) setPending({ ...target, userId: itemUserId });
     };
     const subscription = Notifications.addNotificationResponseReceivedListener(response => {
       void handle(response);
     });
     const initialSequence = responseSequence.current;
     void Notifications.getLastNotificationResponseAsync().then(response => {
-      if (response && responseSequence.current === initialSequence) void handle(response);
+      if (active && response && responseSequence.current === initialSequence) void handle(response);
     }).catch(error => console.warn("Could not read last notification response:", error));
-    return () => subscription.remove();
-  }, []);
+    return () => { active = false; subscription.remove(); };
+  }, [isLoading, itemUserId]);
 
   useEffect(() => {
+    if (pending && pending.userId !== itemUserId) { setPending(undefined); return; }
     if (!navigation?.key || !pending || !session || isLoading) return;
     router.replace({
       pathname: "/(tabs)",
@@ -100,7 +112,7 @@ function RootNavigation() {
       },
     });
     setPending(undefined);
-  }, [navigation?.key, pending, session, isLoading]);
+  }, [navigation?.key, pending, session, isLoading, itemUserId]);
 
   if (isLoading) return null;
 
@@ -116,6 +128,7 @@ function RootNavigation() {
         <Stack
           screenOptions={{
             headerShown: false,
+            statusBarStyle: Platform.OS === "android" ? "light" : "auto",
           }}
         >
           <Stack.Screen
@@ -158,10 +171,7 @@ function RootNavigation() {
           </Stack.Protected>
         </Stack>
 
-        <StatusBar
-          style="auto"
-        />
-        {session && <NativeAlarmCompletion />}
+        {session && <NativeAlarmCompletion key={itemUserId} />}
       </ThemeProvider>
   );
 }

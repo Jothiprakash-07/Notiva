@@ -1,4 +1,10 @@
 import mongoose from "mongoose";
+import { validNotivaId, NOTIVA_ID_COLLATION } from "../services/identity.js";
+
+const otpSchema = new mongoose.Schema({
+  hash: String, email: String, expiresAt: Date, sentAt: Date,
+  attempts: { type: Number, default: 0 },
+}, { _id: false });
 
 const userSchema = new mongoose.Schema(
   {
@@ -10,8 +16,8 @@ const userSchema = new mongoose.Schema(
 
     email: {
       type: String,
-      required: true,
       unique: true,
+      sparse: true,
       lowercase: true,
       trim: true,
     },
@@ -21,6 +27,17 @@ const userSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+
+    notivaId: { type: String, trim: true, validate: validNotivaId },
+    recoveryEmail: { type: String, lowercase: true, trim: true },
+    recoveryEmailVerified: { type: Boolean, default: false },
+    recoveryEmailVerifiedAt: Date,
+    recoveryEmailOtp: otpSchema,
+    passwordResetOtp: otpSchema,
+    resetAuthorizationHash: String,
+    resetAuthorizationExpiresAt: Date,
+    resetAuthorizationPasswordHash: String,
+    resetAuthorizationEmail: String,
 
     organizationCode: {
       type: String,
@@ -38,6 +55,7 @@ const userSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    tokenVersion: { type: Number, default: 0, min: 0 },
 
     role: {
       type: String,
@@ -46,8 +64,11 @@ const userSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
+    autoIndex: false,
   }
 );
+
+userSchema.index({ notivaId: 1 }, { unique: true, sparse: true, name: "notivaId_case_insensitive", collation: NOTIVA_ID_COLLATION });
 
 const User = mongoose.model("User", userSchema);
 

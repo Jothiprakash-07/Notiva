@@ -16,10 +16,10 @@ import { useEffect, useRef, useState } from "react";
 
 import {
   Alert,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
-  StatusBar,
   StyleSheet,
   Switch,
   Text,
@@ -39,6 +39,7 @@ import {
   updateItem,
   getItemById,
   rescheduleItem,
+  getScheduleConflicts,
 } from "../../../services/itemStorage";
 
 import {
@@ -61,6 +62,7 @@ const alerts: AlertBefore[] = [
 
 const birthdayAlerts: AlertBefore[] = [
   { label: "None", minutes: 0 },
+  { label: "5 Minutes Before", minutes: 5 },
   { label: "1 Day Before", minutes: 1440 },
   { label: "2 Days Before", minutes: 2880 },
   { label: "1 Week Before", minutes: 10080 },
@@ -129,13 +131,15 @@ export default function CreateItemScreen() {
   const [description, setDescription] = useState("");
 
   const [category, setCategory] =
-    useState<string>();
+    useState<string | undefined>(params.id ? undefined : "Personal");
 
   const [priority, setPriority] =
-    useState<Priority>();
-  const [priorityExpanded, setPriorityExpanded] = useState(false);
-  const [categoryExpanded, setCategoryExpanded] = useState(false);
-  const [alertExpanded, setAlertExpanded] = useState(false);
+    useState<Priority | undefined>(
+      !params.id && (type === "reminder" || type === "task") ? "Medium" : undefined
+    );
+  const [priorityExpanded, setPriorityExpanded] = useState(!params.id);
+  const [categoryExpanded, setCategoryExpanded] = useState(!params.id);
+  const [alertExpanded, setAlertExpanded] = useState(!params.id);
 
   const [date, setDate] =
     useState(new Date());
@@ -155,9 +159,12 @@ export default function CreateItemScreen() {
 
   const [repeat, setRepeat] =
     useState<RepeatType>("none");
+  const [weeklyDays, setWeeklyDays] = useState<number[]>([]);
 
   const [alertBefore, setAlertBefore] =
-    useState<AlertBefore>();
+    useState<AlertBefore | undefined>(
+      params.id ? undefined : { label: "5 Minutes Before", minutes: 5 }
+    );
 
   const [allDay, setAllDay] =
     useState(
@@ -246,6 +253,7 @@ export default function CreateItemScreen() {
         setTime(start);
 
         setRepeat(item.repeat || "none");
+        setWeeklyDays(item.weeklyDays ?? [start.getDay()]);
         setAlertBefore(
           item.alertBefore || undefined
         );
@@ -316,7 +324,8 @@ export default function CreateItemScreen() {
   };
 
   const savingRef = useRef(false);
-  const save = async () => {
+  const [conflict, setConflict] = useState<{ count: number; at: Date }>();
+  const save = async (keepSameTime = false) => {
     if (
       savingRef.current || saving ||
       loading ||
@@ -363,6 +372,10 @@ export default function CreateItemScreen() {
           ? "Person name is required."
           : "Title is required."
       );
+    }
+
+    if (repeat === "weekly" && !weeklyDays.length) {
+      return setError("Choose at least one weekday.");
     }
 
     if (
@@ -420,6 +433,7 @@ export default function CreateItemScreen() {
 
           category,
           repeat,
+          weeklyDays: repeat === "weekly" ? weeklyDays : undefined,
 
           priority:
             type === "birthday" ||
@@ -451,6 +465,11 @@ export default function CreateItemScreen() {
           updatedAt:
             new Date().toISOString(),
         };
+
+      if (!keepSameTime) {
+        const conflicts = await getScheduleConflicts({ ...item, seriesId: existing?.seriesId });
+        if (conflicts.length) { setConflict({ count: conflicts.length, at: startAt }); return; }
+      }
 
       if (
         existing &&
@@ -486,6 +505,13 @@ export default function CreateItemScreen() {
           );
         }
 
+        return;
+      }
+
+      if (["daily", "weekly", "weekdays"].includes(item.repeat) || existing?.seriesId) {
+        if (existing) await updateItem(item);
+        else await saveItem(item);
+        router.replace("/(tabs)");
         return;
       }
 
@@ -625,11 +651,6 @@ export default function CreateItemScreen() {
     <SafeAreaView
       style={styles.safe}
     >
-      <StatusBar
-        barStyle="dark-content"
-        backgroundColor="#ffffff"
-      />
-
       {/* Header */}
       <View
         style={styles.header}
@@ -1202,8 +1223,25 @@ export default function CreateItemScreen() {
         <View style={styles.sectionCard}>
           <Text style={[styles.cardHeading, styles.optionHeading]}>Repeat</Text>
           <View style={styles.chips}>
-            {repeatOptions.map(option => <Pressable key={option.value} accessibilityRole="radio" accessibilityState={{ checked: repeat === option.value }} style={[styles.chip, repeat === option.value && styles.active]} onPress={() => setRepeat(option.value)}><Text style={repeat === option.value ? styles.activeText : styles.chipText}>{option.label}</Text></Pressable>)}
+            {repeatOptions.map(option => <Pressable key={option.value} accessibilityRole="radio" accessibilityState={{ checked: repeat === option.value }} style={[styles.chip, repeat === option.value && styles.active]} onPress={() => {
+              setRepeat(option.value);
+              if (option.value === "weekly" && !weeklyDays.length) setWeeklyDays([date.getDay()]);
+            }}><Text style={repeat === option.value ? styles.activeText : styles.chipText}>{option.label}</Text></Pressable>)}
           </View>
+          {repeat === "weekdays" && <Text style={styles.helper}>Repeats Monday to Friday</Text>}
+          {repeat === "weekly" && <>
+            <Text style={styles.helper}>Repeat on · choose one or more days</Text>
+            <View style={styles.chips}>
+              {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((label, day) => {
+                const selected = weeklyDays.includes(day);
+                return <Pressable key={day} accessibilityRole="checkbox" accessibilityLabel={label}
+                  accessibilityState={{ checked: selected }} style={[styles.chip, selected && styles.active]}
+                  onPress={() => setWeeklyDays(days => selected ? days.filter(value => value !== day) : [...days, day].sort((a, b) => a - b))}>
+                  <Text style={selected ? styles.activeText : styles.chipText}>{label}</Text>
+                </Pressable>;
+              })}
+            </View>
+          </>}
         </View>
 
         {/* Alert */}
@@ -1241,7 +1279,7 @@ export default function CreateItemScreen() {
             saving &&
               styles.saveDisabled,
           ]}
-          onPress={save}
+          onPress={() => { void save(); }}
           disabled={saving}
         >
           <Text
@@ -1276,6 +1314,25 @@ export default function CreateItemScreen() {
           )}
         </Pressable>
       </ScrollView>
+
+      <Modal visible={Boolean(conflict)} transparent animationType="fade" onRequestClose={() => setConflict(undefined)}>
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.55)", justifyContent: "center", padding: 24 }}>
+          <View accessibilityViewIsModal style={{ backgroundColor: "#FFFFFF", borderRadius: 24, padding: 24 }}>
+            <Text accessibilityRole="header" style={{ color: "#171329", fontSize: 22, fontWeight: "700" }}>Schedule conflict</Text>
+            <Text style={{ color: "#171329", fontSize: 16, lineHeight: 24, marginVertical: 20 }}>
+              {`You already have ${conflict?.count ?? 0} ${(conflict?.count ?? 0) === 1 ? "item" : "items"} scheduled for ${conflict ? formatTime(conflict.at) : ""} on ${conflict ? formatDate(conflict.at) : ""}.\n\nDo you want to keep this time?`}
+            </Text>
+            <Pressable accessibilityRole="button" accessibilityLabel="Change Time" onPress={() => { setConflict(undefined); setPicker(allDay ? "date" : "time"); }}
+              style={{ minHeight: 52, justifyContent: "center", alignItems: "center", borderRadius: 14, backgroundColor: "#EFEDFF", marginBottom: 12 }}>
+              <Text style={{ color: "#4D3FE6", fontWeight: "700", fontSize: 16 }}>Change Time</Text>
+            </Pressable>
+            <Pressable accessibilityRole="button" accessibilityLabel="Keep Same Time" onPress={() => { setConflict(undefined); void save(true); }}
+              style={{ minHeight: 52, justifyContent: "center", alignItems: "center", borderRadius: 14, backgroundColor: "#4D3FE6" }}>
+              <Text style={{ color: "#FFFFFF", fontWeight: "700", fontSize: 16 }}>Keep Same Time</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
 
       {picker ? (
         <DateTimePicker

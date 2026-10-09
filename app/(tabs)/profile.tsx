@@ -1,6 +1,8 @@
 import { useCallback, useMemo, useRef, useState, type PropsWithChildren } from "react";
 import {
+  ActivityIndicator,
   Alert,
+  ScrollView,
   Pressable,
   StyleSheet,
   Text,
@@ -9,35 +11,44 @@ import {
 import { router, useFocusEffect } from "expo-router";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import Constants from "expo-constants";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useAuth } from "../../contexts/AuthContext";
 
-import {
-  Action,
-  MenuRow,
-  ProfilePage,
-  purple,
-  ui,
-} from "../../components/profile/ProfileUI";
+import { purple } from "../../components/profile/ProfileUI";
 
 import {
   getProfile,
   type OrganizationDetails,
 } from "../../services/profileService";
 
-// Dashboard styling stays local so other profile screens keep their layout.
+// Keep this presentation local to the main Profile tab.
 function Section({ title, children }: PropsWithChildren<{ title: string }>) {
-  return (
-    <View style={styles.section}>
-      <Text accessibilityRole="header" style={ui.sectionLabel}>{title}</Text>
-      <View style={styles.sectionCard}>{children}</View>
+  return <View style={styles.section}>
+    <Text accessibilityRole="header" style={styles.sectionLabel}>{title}</Text>
+    <View style={styles.sectionCard}>{children}</View>
+  </View>;
+}
+
+function ProfileRow({ icon, title, subtitle, onPress, last = false }: {
+  icon: keyof typeof Ionicons.glyphMap; title: string; subtitle?: string; onPress: () => void; last?: boolean;
+}) {
+  return <Pressable accessibilityRole="button" accessibilityLabel={title} onPress={onPress}
+    style={({ pressed }) => [styles.row, pressed && styles.pressed]}>
+    <View style={styles.rowIcon}><Ionicons name={icon} size={20} color={purple} /></View>
+    <View style={styles.rowBody}>
+      <Text style={styles.rowTitle}>{title}</Text>
+      {subtitle ? <Text numberOfLines={2} style={styles.rowSubtitle}>{subtitle}</Text> : null}
     </View>
-  );
+    <Ionicons name="chevron-forward" size={17} color="#8C859D" />
+    {!last && <View pointerEvents="none" style={styles.separator} />}
+  </Pressable>;
 }
 
 export default function ProfileScreen() {
   const {
     session,
+    isLoading,
     signOut,
     updateUser,
   } = useAuth();
@@ -187,667 +198,119 @@ export default function ProfileScreen() {
     );
   };
 
-  return (
-    <ProfilePage
-      title="Profile"
-      subtitle="Manage your account and preferences"
-      back={false}
-    >
-      <View style={styles.dashboard}>
-        {/* =========================
-            PROFILE HERO
-        ========================== */}
-
-        <View style={styles.hero}>
-          <View style={styles.heroTop}>
-            <View style={styles.avatarOuter}>
-              <View style={styles.avatar}>
-                <Text style={styles.initials}>
-                  {initials}
-                </Text>
-              </View>
+  return <SafeAreaView edges={["top", "left", "right"]} style={styles.safe}>
+    <View style={styles.header}><Text accessibilityRole="header" style={styles.pageTitle}>Profile</Text></View>
+    <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content}>
+      {isLoading ? <ActivityIndicator color={purple} /> : session ? <>
+        <View style={styles.summary}>
+          <View style={styles.avatar}><Text style={styles.initials}>{initials}</Text></View>
+          <View style={styles.summaryBody}>
+            <Text numberOfLines={2} style={styles.name}>{user?.fullName?.trim() || "Notiva User"}</Text>
+            <View style={styles.identityRow}>
+              <Text accessibilityLabel={`Notiva ID: ${user?.notivaId || "Not set"}`} numberOfLines={2} ellipsizeMode="tail" style={styles.identity}>
+                {user?.notivaId ? `@${user.notivaId}` : "Notiva ID not set"}
+              </Text>
+              <Pressable accessibilityRole="button" accessibilityLabel="Edit Notiva ID"
+                style={({ pressed }) => [styles.editButton, pressed && styles.pressed]}
+                onPress={() => router.push("/screens/profile/EditProfileScreen")}>
+                <Ionicons name="pencil-outline" size={20} color={purple} />
+              </Pressable>
             </View>
-
-            <View style={styles.profileInfo}>
-              <Text
-                numberOfLines={2}
-                style={styles.name}
-              >
-                {user?.fullName || "Notiva User"}
+            <Text style={styles.emailLabel}>Recovery email</Text>
+            <Text selectable numberOfLines={2} ellipsizeMode="middle" style={styles.email}>
+              {user?.recoveryEmail || user?.email || "Not provided"}
+            </Text>
+            <View style={styles.verification}>
+              <Ionicons name={user?.recoveryEmailVerified ? "checkmark-circle" : "ellipse-outline"}
+                size={13} color={user?.recoveryEmailVerified ? "#21754A" : "#777184"} />
+              <Text style={[styles.verificationText, user?.recoveryEmailVerified && styles.verified]}>
+                {user?.recoveryEmailVerified ? "Verified" : "Not verified"}
               </Text>
-
-              <Text
-                selectable
-                style={styles.email}
-              >
-                {user?.email || ""}
-              </Text>
-
-              <View style={styles.pills}>
-                <View style={styles.rolePill}>
-                  <Ionicons
-                    name="shield-checkmark-outline"
-                    size={12}
-                    color={purple}
-                  />
-
-                  <Text style={styles.pillText}>
-                    {user?.role || "User"}
-                  </Text>
-                </View>
-
-                {organizationCode ? (
-                  <View style={styles.organizationPill}>
-                    <Ionicons
-                      name="business-outline"
-                      size={12}
-                      color={purple}
-                    />
-
-                    <Text
-                      numberOfLines={1}
-                      style={styles.organizationPillText}
-                    >
-                      {organizationName}
-                    </Text>
-                  </View>
-                ) : null}
-              </View>
             </View>
           </View>
-
         </View>
 
-        {/* =========================
-            PROFILE REFRESH ERROR
-        ========================== */}
-
-        {error ? (
-          <View style={styles.errorCard}>
-            <View style={styles.errorTop}>
-              <Ionicons
-                name="cloud-offline-outline"
-                size={19}
-                color={purple}
-              />
-
-              <View style={ui.flex}>
-                <Text
-                  accessibilityRole="alert"
-                  style={styles.errorTitle}
-                >
-                  Could not refresh profile
-                </Text>
-
-                <Text style={styles.errorDescription}>
-                  Showing your saved account details.
-                </Text>
-              </View>
-            </View>
-
-            <Pressable
-              accessibilityRole="button"
-              onPress={() =>
-                setRevision(value => value + 1)
-              }
-              style={({ pressed }) => [
-                styles.refreshButton,
-                pressed && styles.pressed,
-              ]}
-            >
-              <Ionicons
-                name="refresh-outline"
-                size={16}
-                color={purple}
-              />
-
-              <Text style={styles.refreshText}>
-                Refresh Account
-              </Text>
-            </Pressable>
-          </View>
-        ) : null}
-
-        {/* =========================
-            ACCOUNT
-        ========================== */}
+        {error ? <View style={styles.errorCard}>
+          <Text accessibilityRole="alert" style={styles.rowTitle}>Could not refresh profile</Text>
+          <Text style={styles.rowSubtitle}>Showing your saved account details.</Text>
+          <Pressable accessibilityRole="button" accessibilityLabel="Refresh Account"
+            onPress={() => setRevision(value => value + 1)} style={styles.refreshButton}>
+            <Ionicons name="refresh-outline" size={16} color={purple} />
+            <Text style={styles.refreshText}>Refresh Account</Text>
+          </Pressable>
+        </View> : null}
 
         <Section title="Account">
-          <MenuRow
-            icon="person-outline"
-            title="Personal Information"
-            description="Name, mobile number and department"
-            onPress={() =>
-              router.push(
-                "/screens/profile/EditProfileScreen",
-              )
-            }
-          />
-
-          <MenuRow
-            icon="lock-closed-outline"
-            title="Change Password"
-            description="Update your account password"
-            onPress={() =>
-              router.push(
-                "/screens/profile/ChangePasswordScreen",
-              )
-            }
-          />
-
-          <MenuRow
-            icon="shield-checkmark-outline"
-            title="Account Session"
-            description="Signed in securely to Notiva"
-          />
+          <ProfileRow icon="person-outline" title="Personal Information"
+            subtitle="Your identity and contact details" onPress={() => router.push("/screens/profile/EditProfileScreen")} />
+          <ProfileRow icon="business-outline" title="Organization"
+            subtitle={organizationCode ? organizationName : "Join your organization"}
+            onPress={() => router.push("/screens/profile/OrganizationScreen")} />
+          <ProfileRow icon="shield-checkmark-outline" title="Password & Security" last
+            onPress={() => router.push("/screens/profile/ChangePasswordScreen")} />
         </Section>
-
-        {/* =========================
-            ORGANIZATION
-        ========================== */}
-
-        <Section title="Organization">
-          {organizationCode ? (
-            <>
-              <View style={styles.organizationSummary}>
-                <View style={styles.organizationIcon}>
-                  <Ionicons
-                    name="business-outline"
-                    size={22}
-                    color={purple}
-                  />
-                </View>
-
-                <View style={ui.flex}>
-                  <Text
-                    numberOfLines={2}
-                    style={styles.organizationName}
-                  >
-                    {organizationName}
-                  </Text>
-
-                  <Text
-                    selectable
-                    style={styles.organizationMeta}
-                  >
-                    Code · {organizationCode}
-                  </Text>
-                  <Text style={styles.organizationMeta}>
-                    Department · {user?.department || "Not provided"}
-                  </Text>
-                </View>
-              </View>
-
-              <MenuRow
-                icon="business-outline"
-                title="View Organization"
-                description="Organization details and your access"
-                onPress={() =>
-                  router.push(
-                    "/screens/profile/OrganizationScreen",
-                  )
-                }
-              />
-
-              <MenuRow
-                icon="swap-horizontal-outline"
-                title="Change Organization"
-                description="Connect using another verified organization code"
-                onPress={() =>
-                  router.push(
-                    "/screens/profile/JoinOrganizationScreen",
-                  )
-                }
-              />
-            </>
-          ) : (
-            <>
-              <View style={styles.noOrganization}>
-                <View style={styles.noOrgIcon}>
-                  <Ionicons
-                    name="business-outline"
-                    size={22}
-                    color={purple}
-                  />
-                </View>
-
-                <View style={ui.flex}>
-                  <Text style={styles.noOrgTitle}>
-                    No organization connected
-                  </Text>
-
-                  <Text style={styles.noOrgDescription}>
-                    Join your workplace using a verified
-                    organization code.
-                  </Text>
-                </View>
-              </View>
-
-              <MenuRow
-                icon="add-circle-outline"
-                title="Join Organization"
-                description="Enter your office organization code"
-                onPress={() =>
-                  router.push(
-                    "/screens/profile/JoinOrganizationScreen",
-                  )
-                }
-              />
-            </>
-          )}
-        </Section>
-
-        {/* =========================
-            PREFERENCES
-        ========================== */}
 
         <Section title="Preferences">
-          <MenuRow
-            icon="notifications-outline"
-            title="Notification Settings"
-            description="Alarm sound, pre-alerts and vibration"
-            onPress={() =>
-              router.push(
-                "/screens/profile/NotificationSettingsScreen",
-              )
-            }
-          />
-
-          <MenuRow
-            icon="options-outline"
-            title="App Settings"
-            description="Choose the first day of the week"
-            onPress={() =>
-              router.push(
-                "/screens/profile/AppSettingsScreen",
-              )
-            }
-          />
+          <ProfileRow icon="notifications-outline" title="Notification Settings"
+            subtitle="Alarm sound, pre-alerts and vibration" onPress={() => router.push("/screens/profile/NotificationSettingsScreen")} />
+          <ProfileRow icon="options-outline" title="App Settings" last
+            subtitle="Week start preference" onPress={() => router.push("/screens/profile/AppSettingsScreen")} />
         </Section>
 
-        {/* =========================
-            LOGOUT
-        ========================== */}
-
-        <Action
-          label="Log Out"
-          destructive
-          busy={loggingOut}
-          onPress={logout}
-        />
-
-        {/* =========================
-            FOOTER
-        ========================== */}
-
-        <View style={styles.footer}>
-          <Text style={styles.brand}>
-            NOTIVA
-          </Text>
-
-          {Constants.expoConfig?.version ? (
-            <Text style={styles.version}>
-              Version {Constants.expoConfig.version}
-            </Text>
-          ) : null}
+        <Pressable accessibilityRole="button" accessibilityLabel="Log Out"
+          accessibilityState={{ disabled: loggingOut, busy: loggingOut }} disabled={loggingOut}
+          style={({ pressed }) => [styles.logout, pressed && styles.pressed]} onPress={logout}>
+          {loggingOut ? <ActivityIndicator color="#B43242" /> : <>
+            <Ionicons name="log-out-outline" size={20} color="#B43242" />
+            <Text style={styles.logoutText}>Log Out</Text>
+          </>}
+        </Pressable>
+        <View style={styles.footer}><Text style={styles.brand}>NOTIVA</Text>
+          {Constants.expoConfig?.version ? <Text style={styles.version}>Version {Constants.expoConfig.version}</Text> : null}
         </View>
-      </View>
-    </ProfilePage>
-  );
+      </> : <View style={styles.errorCard}>
+        <Text style={styles.rowTitle}>Sign in to manage your profile</Text>
+        <Pressable accessibilityRole="button" accessibilityLabel="Sign In" style={styles.refreshButton}
+          onPress={() => router.replace("/screens/login/LoginScreen")}><Text style={styles.refreshText}>Sign In</Text></Pressable>
+      </View>}
+    </ScrollView>
+  </SafeAreaView>;
 }
 
 const styles = StyleSheet.create({
-  dashboard: { gap: 18 },
-  section: { gap: 8 },
-  sectionCard: {
-    padding: 14,
-    gap: 8,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: "#E9E5F0",
-    backgroundColor: "#FFFFFF",
-    elevation: 2,
-    shadowColor: "#342965",
-    shadowOpacity: 0.04,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
-  },
-  hero: {
-    backgroundColor: "#EFEDFF",
-    borderRadius: 24,
-    padding: 18,
-
-    borderWidth: 1,
-    borderColor: "#E4E0FF",
-
-    shadowColor: "#30286A",
-    shadowOffset: {
-      width: 0,
-      height: 5,
-    },
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-
-    elevation: 2,
-  },
-
-  heroTop: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 15,
-  },
-
-  avatarOuter: {
-    width: 70,
-    height: 70,
-    flexShrink: 0,
-    borderRadius: 25,
-
-    backgroundColor: "#FFFFFF",
-
-    alignItems: "center",
-    justifyContent: "center",
-
-    shadowColor: purple,
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
-    shadowOpacity: 0.12,
-    shadowRadius: 8,
-
-    elevation: 3,
-  },
-
-  avatar: {
-    width: 64,
-    height: 64,
-
-    borderRadius: 21,
-
-    alignItems: "center",
-    justifyContent: "center",
-
-    backgroundColor: "#DFDAFF",
-  },
-
-  initials: {
-    color: purple,
-
-    fontSize: 23,
-    lineHeight: 28,
-
-    fontWeight: "900",
-  },
-
-  profileInfo: {
-    flex: 1,
-    minWidth: 0,
-  },
-
-  name: {
-    color: "#211A3A",
-
-    fontSize: 21,
-    lineHeight: 27,
-
-    fontWeight: "900",
-  },
-
-  email: {
-    marginTop: 3,
-
-    color: "#716B81",
-
-    fontSize: 12,
-    lineHeight: 18,
-
-    fontWeight: "600",
-  },
-
-  pills: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-
-    gap: 7,
-
-    marginTop: 10,
-  },
-
-  rolePill: {
-    flexDirection: "row",
-    alignItems: "center",
-
-    gap: 4,
-
-    backgroundColor: "#FFFFFF",
-
-    borderRadius: 10,
-
-    paddingVertical: 6,
-    paddingHorizontal: 9,
-  },
-
-  organizationPill: {
-    maxWidth: "100%",
-
-    flexDirection: "row",
-    alignItems: "center",
-
-    gap: 4,
-
-    backgroundColor: "#FFFFFF",
-
-    borderRadius: 10,
-
-    paddingVertical: 6,
-    paddingHorizontal: 9,
-  },
-
-  pillText: {
-    color: purple,
-
-    fontSize: 10,
-    fontWeight: "800",
-
-    textTransform: "capitalize",
-  },
-
-  organizationPillText: {
-    flexShrink: 1,
-
-    color: purple,
-
-    fontSize: 10,
-    fontWeight: "800",
-  },
-
-  errorCard: {
-    padding: 16,
-
-    borderRadius: 18,
-
-    backgroundColor: "#F8F7FF",
-
-    borderWidth: 1,
-    borderColor: "#E4E0FF",
-
-    gap: 13,
-  },
-
-  errorTop: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-
-    gap: 9,
-  },
-
-  errorTitle: {
-    color: "#302A40",
-
-    fontSize: 12,
-    fontWeight: "800",
-  },
-
-  errorDescription: {
-    marginTop: 2,
-
-    color: "#716B81",
-
-    fontSize: 12,
-    lineHeight: 18,
-
-    fontWeight: "600",
-  },
-
-  refreshButton: {
-    minHeight: 48,
-
-    borderRadius: 12,
-
-    borderWidth: 1,
-    borderColor: "#DCD6FF",
-
-    backgroundColor: "#FFFFFF",
-
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-
-    gap: 7,
-  },
-
-  refreshText: {
-    color: purple,
-
-    fontSize: 11,
-    fontWeight: "800",
-  },
-
-  pressed: {
-    opacity: 0.75,
-
-    transform: [
-      {
-        scale: 0.99,
-      },
-    ],
-  },
-
-  organizationSummary: {
-    marginBottom: 5,
-
-    padding: 13,
-
-    flexDirection: "row",
-    alignItems: "center",
-
-    gap: 11,
-
-    backgroundColor: "#F8F7FF",
-
-    borderRadius: 15,
-  },
-
-  organizationIcon: {
-    width: 42,
-    height: 42,
-
-    borderRadius: 13,
-
-    alignItems: "center",
-    justifyContent: "center",
-
-    backgroundColor: "#ECE9FF",
-  },
-
-  organizationName: {
-    color: "#211A3A",
-
-    fontSize: 13,
-    lineHeight: 18,
-
-    fontWeight: "800",
-  },
-
-  organizationMeta: {
-    marginTop: 3,
-
-    color: "#777183",
-
-    fontSize: 10,
-    lineHeight: 15,
-
-    fontWeight: "600",
-  },
-
-  noOrganization: {
-    marginBottom: 6,
-
-    padding: 13,
-
-    flexDirection: "row",
-    alignItems: "center",
-
-    gap: 11,
-
-    borderRadius: 15,
-
-    backgroundColor: "#F8F7FF",
-  },
-
-  noOrgIcon: {
-    width: 42,
-    height: 42,
-
-    borderRadius: 13,
-
-    backgroundColor: "#ECE9FF",
-
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  noOrgTitle: {
-    color: "#211A3A",
-
-    fontSize: 13,
-    fontWeight: "800",
-  },
-
-  noOrgDescription: {
-    marginTop: 3,
-
-    color: "#827C8D",
-
-    fontSize: 10,
-    lineHeight: 15,
-
-    fontWeight: "600",
-  },
-
-  footer: {
-    alignItems: "center",
-
-    paddingTop: 12,
-    paddingBottom: 8,
-
-    gap: 3,
-  },
-
-  brand: {
-    color: "#8B839B",
-
-    fontSize: 13,
-    fontWeight: "900",
-
-    letterSpacing: 1.4,
-  },
-
-  version: {
-    color: "#B0ABB9",
-
-    fontSize: 11,
-    fontWeight: "600",
-  },
+  safe: { flex: 1, backgroundColor: "#F7F7FC" },
+  header: { paddingHorizontal: 20, paddingTop: 18, paddingBottom: 22 },
+  pageTitle: { color: "#171329", fontSize: 24, fontWeight: "800", textAlign: "center" },
+  content: { paddingHorizontal: 20, paddingBottom: 30, gap: 24, width: "100%", maxWidth: 680, alignSelf: "center" },
+  summary: { backgroundColor: "white", borderRadius: 24, padding: 20, flexDirection: "row", alignItems: "flex-start", gap: 14 },
+  avatar: { width: 48, height: 48, flexShrink: 0, borderRadius: 16, backgroundColor: "#EFEDFF", alignItems: "center", justifyContent: "center" },
+  initials: { color: purple, fontSize: 18, fontWeight: "800" },
+  summaryBody: { flex: 1, minWidth: 0 },
+  name: { color: "#171329", fontSize: 18, lineHeight: 25, fontWeight: "800" },
+  identityRow: { flexDirection: "row", alignItems: "center", gap: 4 },
+  identity: { flex: 1, minWidth: 0, color: purple, fontSize: 14, lineHeight: 20, fontWeight: "700" },
+  editButton: { width: 44, height: 44, flexShrink: 0, alignItems: "center", justifyContent: "center" },
+  emailLabel: { color: "#777184", fontSize: 11, marginTop: 3 },
+  email: { color: "#625B73", fontSize: 12, lineHeight: 18, marginTop: 3 },
+  verification: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 7 },
+  verificationText: { color: "#777184", fontSize: 11, lineHeight: 16 },
+  verified: { color: "#21754A" },
+  section: { gap: 9 },
+  sectionLabel: { color: "#777184", fontSize: 11, fontWeight: "700", letterSpacing: 1.4, textTransform: "uppercase", marginLeft: 4 },
+  sectionCard: { backgroundColor: "white", borderRadius: 20 },
+  row: { minHeight: 68, paddingHorizontal: 16, paddingVertical: 14, flexDirection: "row", alignItems: "center", gap: 12 },
+  rowIcon: { width: 34, height: 34, flexShrink: 0, borderRadius: 11, backgroundColor: "#F7F5FF", alignItems: "center", justifyContent: "center" },
+  rowBody: { flex: 1, minWidth: 0 },
+  rowTitle: { color: "#171329", fontSize: 14, fontWeight: "600", lineHeight: 20 },
+  rowSubtitle: { color: "#777184", fontSize: 12, lineHeight: 18, marginTop: 3 },
+  separator: { position: "absolute", bottom: 0, left: 62, right: 16, height: StyleSheet.hairlineWidth, backgroundColor: "#EEEBF4" },
+  logout: { minHeight: 52, borderRadius: 16, backgroundColor: "#FFF0F1", flexDirection: "row", gap: 9, alignItems: "center", justifyContent: "center" },
+  logoutText: { color: "#B43242", fontSize: 14, fontWeight: "700" },
+  errorCard: { padding: 18, borderRadius: 20, backgroundColor: "white" },
+  refreshButton: { minHeight: 48, flexDirection: "row", gap: 8, alignItems: "center", justifyContent: "center", marginTop: 8 },
+  refreshText: { color: purple, fontSize: 13, fontWeight: "700" },
+  pressed: { opacity: 0.7 },
+  footer: { alignItems: "center", gap: 4, paddingBottom: 4 },
+  brand: { color: "#8C859D", fontSize: 11, fontWeight: "800", letterSpacing: 3 },
+  version: { color: "#8C859D", fontSize: 11 },
 });

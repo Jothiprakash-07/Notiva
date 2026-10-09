@@ -90,6 +90,40 @@ export function isItemReadOnly(
   );
 }
 
+/** Compare actual local occurrence slots without backend calls or permanent groups. */
+export function findScheduleConflicts(items: ReminderItem[], candidate: ReminderItem, now = new Date()): ReminderItem[] {
+  const target = new Date(candidate.startAt);
+  if (!Number.isFinite(target.getTime())) return [];
+  const dayKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  const seen = new Set<string>();
+  return items.filter(item => {
+    if (item.id === candidate.id || item.completed || item.actionResolved || item.syncStatus === "pending_delete" ||
+        ["Done", "Completed", "Cancelled"].includes(getItemStatus(item, now))) return false;
+    const start = new Date(item.startAt);
+    if (!Number.isFinite(start.getTime()) || start.getHours() !== target.getHours() || start.getMinutes() !== target.getMinutes()) return false;
+    const exactDay = dayKey(start) === dayKey(target);
+    // Generated series rows already represent one actual date. Only anchors
+    // and standalone repeating schedules may project another occurrence.
+    const anchor = !item.seriesId || Boolean(item.dailySeries);
+    let occurs = exactDay && !item.dailyHidden;
+    if (!occurs && anchor && start <= target && item.repeat !== "none") {
+      const repeat = item.dailySeries?.repeat ?? item.repeat;
+      occurs = repeat === "daily" ||
+        (repeat === "weekly" && (item.weeklyDays ?? [start.getDay()]).includes(target.getDay())) ||
+        (repeat === "weekdays" && target.getDay() !== 0 && target.getDay() !== 6) ||
+        (repeat === "monthly" && start.getDate() === target.getDate()) ||
+        (repeat === "yearly" && start.getMonth() === target.getMonth() && start.getDate() === target.getDate());
+    }
+    if (item.dailySeries && (!item.dailySeries.active || item.dailySeries.excludedDates.includes(dayKey(target)))) return false;
+    if (item.dailyHidden && exactDay) return false;
+    // Editing an occurrence must not conflict with its own series projection.
+    if (candidate.seriesId && candidate.seriesId === (item.seriesId ?? item.id)) return false;
+    const identity = `${item.seriesId ?? item.id}:${dayKey(target)}`;
+    if (!occurs || seen.has(identity)) return false;
+    seen.add(identity); return true;
+  });
+}
+
 export function withCalculatedStatus(
   item: ReminderItem,
   now = new Date()

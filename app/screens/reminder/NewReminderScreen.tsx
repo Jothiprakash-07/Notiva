@@ -5,7 +5,6 @@ import React, { useState } from "react";
 import {
   Pressable,
   ScrollView,
-  StatusBar,
   StyleSheet,
   Text,
   TextInput,
@@ -63,11 +62,6 @@ export default function NewReminderScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar
-        barStyle="dark-content"
-        backgroundColor="#ffffff"
-      />
-
       {/* Header */}
       <View style={styles.header}>
         <Pressable

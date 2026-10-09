@@ -1,3 +1,6 @@
+import { Redirect, router } from "expo-router";
+import { useAuth } from "../../../contexts/AuthContext";
+import { setOnboardingCompleted } from "../../../services/onboardingStorage";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useRef, useState } from "react";
 import {
@@ -6,7 +9,6 @@ import {
   NativeScrollEvent,
   NativeSyntheticEvent,
   Pressable,
-  StatusBar,
   StyleSheet,
   Text,
   useWindowDimensions,
@@ -56,6 +58,11 @@ const onboardingData = [
 export default function OnboardingScreen({
   onFinish,
 }: OnboardingScreenProps) {
+  const { session, isLoading } = useAuth();
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const finishLock = useRef(false);
+
   const { width, height } =
     useWindowDimensions();
 
@@ -79,7 +86,8 @@ export default function OnboardingScreen({
     onboardingData[currentIndex]?.color ??
     "#4d3fe6";
 
-  const handleContinue = () => {
+  const handleContinue = async () => {
+    if (finishLock.current) return;
     if (!isLastSlide) {
       listRef.current?.scrollToIndex({
         index: currentIndex + 1,
@@ -89,7 +97,19 @@ export default function OnboardingScreen({
       return;
     }
 
-    onFinish?.();
+    finishLock.current = true;
+    setSaving(true);
+    setError("");
+    try {
+      await setOnboardingCompleted();
+      if (onFinish) onFinish();
+      else router.replace("/");
+    } catch {
+      setError("Could not save onboarding completion. Please try Get started again.");
+    } finally {
+      finishLock.current = false;
+      setSaving(false);
+    }
   };
 
   const handleSkip = () => {
@@ -121,13 +141,11 @@ export default function OnboardingScreen({
     setCurrentIndex(safeIndex);
   };
 
+  if (isLoading) return null;
+  if (session) return <Redirect href="/(tabs)" />;
+
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar
-        barStyle="dark-content"
-        backgroundColor="#ffffff"
-      />
-
       <View style={styles.screen}>
         {/* Header */}
         <View style={styles.header}>
@@ -349,6 +367,7 @@ export default function OnboardingScreen({
 
         {/* Footer */}
         <View style={styles.footer}>
+          {!!error && <Text accessibilityRole="alert" style={{ color: "#B4233A", textAlign: "center", marginBottom: 8 }}>{error}</Text>}
           <View
             style={
               styles.dotsWrapper
@@ -407,7 +426,9 @@ export default function OnboardingScreen({
               pressed &&
                 styles.continuePressed,
             ]}
-            onPress={handleContinue}
+            disabled={saving}
+            accessibilityState={{ disabled: saving, busy: saving }}
+            onPress={() => void handleContinue()}
           >
             <Text
               allowFontScaling={false}

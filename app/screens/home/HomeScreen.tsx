@@ -19,7 +19,6 @@ import {
   AppState,
   Pressable,
   ScrollView,
-  StatusBar,
   StyleSheet,
   Text,
   TextInput,
@@ -37,6 +36,7 @@ import { useAuth } from "../../../contexts/AuthContext";
 
 import {
   getItems,
+  subscribeItemRestore,
   toggleComplete,
 } from "../../../services/itemStorage";
 
@@ -177,7 +177,8 @@ function displayItem(
 function matchesDateFilter(
   startAt: string,
   filter: DateFilter,
-  now: Date
+  now: Date,
+  includePeriodHistory = false
 ): boolean {
   const timestamp =
     new Date(
@@ -258,12 +259,14 @@ function matchesDateFilter(
       end.getDate() +
         daysUntilSunday
     );
+    if (includePeriodHistory) start.setDate(start.getDate() - (start.getDay() + 6) % 7);
   }
 
   if (
     filter ===
     "This Month"
   ) {
+    if (includePeriodHistory) start.setDate(1);
     end =
       new Date(
         now.getFullYear(),
@@ -555,6 +558,7 @@ export default function HomeScreen() {
         };
 
       void refresh();
+      const stopRestore = subscribeItemRestore(() => { void refresh(); });
 
       let wasBackgrounded =
         AppState.currentState ===
@@ -623,6 +627,7 @@ export default function HomeScreen() {
           false;
 
         subscription.remove();
+        stopRestore();
 
         clearInterval(
           timer
@@ -652,7 +657,8 @@ export default function HomeScreen() {
               matchesDateFilter(
                 reminder.startAt,
                 dateFilter,
-                now
+                now,
+                Boolean(reminder.seriesId)
               );
 
             if (
@@ -766,11 +772,6 @@ export default function HomeScreen() {
         "right",
       ]}
     >
-      <StatusBar
-        barStyle="light-content"
-        backgroundColor="#4d3fe6"
-      />
-
       <View
         style={
           styles.container

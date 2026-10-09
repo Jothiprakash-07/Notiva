@@ -15,6 +15,7 @@ import {
   writeAuthSession,
 } from "../services/authStorage";
 import { AuthSession, AuthUser } from "../types/auth";
+import { selectItemAccount } from "../services/itemAccount";
 
 type AuthContextValue = {
   session: AuthSession | null;
@@ -22,6 +23,7 @@ type AuthContextValue = {
   signIn: (session: AuthSession) => Promise<void>;
   signOut: () => Promise<void>;
   updateUser: (token: string, user: AuthUser) => Promise<void>;
+  replaceSession: (existingToken: string, nextSession: AuthSession) => Promise<boolean>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -32,7 +34,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const liveSession = useRef<AuthSession | null>(null);
   const sessionGeneration = useRef(0);
   const writes = useRef<Promise<unknown>>(Promise.resolve());
-  const persist = useCallback((action: () => Promise<void>) => {
+  const persist = useCallback(<T,>(action: () => Promise<T>): Promise<T> => {
     const result = writes.current.then(action);
     writes.current = result.catch(() => undefined);
     return result;
@@ -44,10 +46,10 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
     readAuthSession()
       .then((storedSession) => {
-        if (active && generation === sessionGeneration.current) { liveSession.current = storedSession; setSession(storedSession); }
+        if (active && generation === sessionGeneration.current) { selectItemAccount(storedSession); liveSession.current = storedSession; setSession(storedSession); }
       })
       .catch(() => {
-        if (active && generation === sessionGeneration.current) setSession(null);
+        if (active && generation === sessionGeneration.current) { selectItemAccount(null); setSession(null); }
       })
       .finally(() => {
         if (active) setIsLoading(false);
@@ -64,14 +66,14 @@ export function AuthProvider({ children }: PropsWithChildren) {
       if (generation !== sessionGeneration.current) return;
       await writeAuthSession(nextSession);
       if (generation !== sessionGeneration.current) return;
-      liveSession.current = nextSession;
+      selectItemAccount(nextSession); liveSession.current = nextSession;
       setSession(nextSession);
     });
   }, [persist]);
 
   const signOut = useCallback(async () => {
     ++sessionGeneration.current;
-    liveSession.current = null;
+    selectItemAccount(null); liveSession.current = null;
     setSession(null);
     await persist(async () => {
       await clearAuthSession();
@@ -86,14 +88,27 @@ export function AuthProvider({ children }: PropsWithChildren) {
       const next = { ...liveSession.current, user };
       await writeAuthSession(next);
       if (generation !== sessionGeneration.current) return;
-      liveSession.current = next;
+      selectItemAccount(next); liveSession.current = next;
       setSession(next);
     });
   }, [persist]);
 
+  const replaceSession = useCallback(async (existingToken: string, nextSession: AuthSession) => {
+    const generation = sessionGeneration.current;
+    return persist(async () => {
+      if (generation !== sessionGeneration.current || liveSession.current?.token !== existingToken ||
+          liveSession.current.user.id !== nextSession.user.id) return false;
+      await writeAuthSession(nextSession);
+      if (generation !== sessionGeneration.current) return false;
+      selectItemAccount(nextSession); liveSession.current = nextSession;
+      setSession(nextSession);
+      return true;
+    });
+  }, [persist]);
+
   const value = useMemo(
-    () => ({ session, isLoading, signIn, signOut, updateUser }),
-    [session, isLoading, signIn, signOut, updateUser]
+    () => ({ session, isLoading, signIn, signOut, updateUser, replaceSession }),
+    [session, isLoading, signIn, signOut, updateUser, replaceSession]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

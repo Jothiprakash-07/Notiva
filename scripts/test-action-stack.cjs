@@ -271,6 +271,44 @@ async function setup(count) {
   assert.equal(completionRoute.params.notificationItemId, 'alarm');
   assert.equal(completionRoute.params.notificationResponseId, 'confirm-token');
   assert.equal(document.querySelector('textarea'), null);
+  for (const type of ['reminder', 'task']) {
+    for (const grouped of [false, true]) {
+      await act(async () => root.render(null));
+      calls = [];
+      items = [
+        { id: 'selected', type, title: `${type} selected`, startAt: '2020-01-01T10:00:00' },
+        ...(grouped ? [{ id: 'sibling', type, title: 'Unresolved sibling', startAt: '2020-01-01T10:00:00' }] : []),
+      ];
+      nativeDone = { token: `${type}-${grouped}`, itemId: 'selected' };
+      await act(async () => root.render(React.createElement(NativeCompletion)));
+      assert.ok(document.querySelector('textarea'), 'Solo and group use the existing note modal');
+      assert.equal(items[0].completed, undefined, 'Native request does not mark Done');
+      await typeNote('  Completed selected occurrence  ');
+      await click('Done');
+      assert.deepEqual(calls, ['done']);
+      assert.equal(storage.lastNote, 'Completed selected occurrence');
+      assert.equal(items[0].completed, true);
+      if (grouped) assert.equal(items[1].completed, undefined);
+      assert.equal(nativeDone, undefined);
+      assert.equal(completionRoute.params.notificationItemId, 'selected');
+    }
+  }
+  await act(async () => root.render(null));
+  calls = [];
+  items = [
+    { id: 'older', type: 'reminder', title: 'Older pending note', startAt: '2020-01-01T10:00:00' },
+    { id: 'latest', type: 'task', title: 'Selected group task', startAt: '2020-01-01T10:00:00' },
+  ];
+  nativeDone = { token: 'older-token', itemId: 'older' };
+  await act(async () => root.render(React.createElement(NativeCompletion)));
+  await typeNote('Draft for older item');
+  nativeDone = { token: 'latest-token', itemId: 'latest' };
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 1100)); });
+  assert.ok(document.body.textContent.includes('Selected group task'));
+  assert.equal(document.querySelector('textarea').value, '', 'Notes cannot transfer to a different selected item');
+  await typeNote('Only latest item'); await click('Done');
+  assert.equal(items[0].completed, undefined); assert.equal(items[1].completed, true);
+  assert.equal(completionRoute.params.notificationItemId, 'latest');
   await act(async () => root.unmount());
   console.log('PASS: native Done recovery opens existing modal, Cancel preserves status, Skip Note confirms once and acknowledges the native action.');
   console.log('PASS: shared completion modal trim/empty/Skip Note/Cancel/reset, 300-character limit, failed-save retry, double-tap lock, and Action Required completion failure/success.');

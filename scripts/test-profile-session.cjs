@@ -21,6 +21,7 @@ const code = ts.transpileModule(fs.readFileSync(path.join(__dirname, '../context
 }).outputText;
 vm.runInNewContext(code, { module: moduleContext, exports: moduleContext.exports, require: id => {
   if (id === 'react' || id === 'react/jsx-runtime') return require(id);
+  if (id.endsWith('itemAccount')) return { selectItemAccount() {} };
   if (id.endsWith('authStorage')) return {
     readAuthSession: async () => { const snapshot = stored; if (readGate) await readGate; return snapshot; },
     writeAuthSession: async value => { if (failWrite) throw Error('disk unavailable'); if (writeGate) await writeGate; stored = value; },
@@ -54,6 +55,18 @@ const root = createRoot(document.getElementById('root'));
   });
   assert.equal(auth.session, null); assert.equal(stored, null);
   console.log('PASS session guards, storage failure handling and logout while a profile response is in flight');
+  failWrite = true;
+  await act(async () => assert.rejects(auth.signIn(original)));
+  assert.equal(auth.session, null); assert.equal(stored, null);
+  failWrite = false;
+  let releaseLoginWrite, signingIn;
+  writeGate = new Promise(resolve => { releaseLoginWrite = resolve; });
+  await act(async () => { signingIn = auth.signIn(original); });
+  assert.equal(auth.session, null); assert.equal(stored, null);
+  await act(async () => { releaseLoginWrite(); await signingIn; });
+  assert.equal(auth.session.token, original.token); assert.equal(stored.token, original.token);
+  writeGate = undefined;
+  console.log('PASS login publishes session only after storage succeeds; failed login write leaves no partial session');
   await act(async () => auth.signIn(original));
   await act(async () => {
     await Promise.all([auth.updateUser(original.token, { ...original.user, fullName: 'Saving' }), auth.signOut()]);
@@ -71,6 +84,36 @@ const root = createRoot(document.getElementById('root'));
   assert.equal(auth.session, null); assert.equal(stored, null);
   writeGate = undefined;
   console.log('PASS in-flight persistence cannot restore the session after immediate logout');
+  await act(async () => auth.signIn(original));
+  const replacement = { token: 'replacement-session', user: { ...original.user, fullName: 'Renewed' } };
+  let replaced;
+  await act(async () => { replaced = await auth.replaceSession(original.token, replacement); });
+  assert.equal(replaced, true); assert.equal(stored.token, replacement.token); assert.equal(auth.session.token, replacement.token);
+  await act(async () => auth.updateUser(original.token, { ...original.user, fullName: 'Stale profile' }));
+  assert.equal(auth.session.user.fullName, 'Renewed');
+  await act(async () => { replaced = await auth.replaceSession(original.token, original); });
+  assert.equal(replaced, false);
+  failWrite = true;
+  await act(async () => assert.rejects(auth.replaceSession(replacement.token, original)));
+  assert.equal(auth.session.token, replacement.token); failWrite = false;
+  await act(async () => {
+    const logout = auth.signOut();
+    replaced = await auth.replaceSession(replacement.token, original);
+    await logout;
+  });
+  assert.equal(replaced, false); assert.equal(auth.session, null); assert.equal(stored, null);
+  await act(async () => auth.signIn(original));
+  writeGate = new Promise(resolve => { releaseWrite = resolve; });
+  let replacing;
+  await act(async () => { replacing = auth.replaceSession(original.token, replacement); });
+  await act(async () => { loggingOut = auth.signOut(); });
+  await act(async () => { releaseWrite(); replaced = await replacing; await loggingOut; });
+  assert.equal(replaced, false); assert.equal(auth.session, null); assert.equal(stored, null);
+  writeGate = undefined;
+  await act(async () => auth.signIn({ token: 'different-login', user: original.user }));
+  await act(async () => { replaced = await auth.replaceSession(original.token, replacement); });
+  assert.equal(replaced, false); assert.equal(auth.session.token, 'different-login');
+  console.log('PASS replacement token persists; stale responses, storage failure, logout races and different login are guarded');
   stored = original;
   let releaseRead;
   readGate = new Promise(resolve => { releaseRead = resolve; });
