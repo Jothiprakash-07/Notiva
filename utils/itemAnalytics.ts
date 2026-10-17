@@ -1,3 +1,4 @@
+import { localDateKey } from "./dailyRecurrence";
 import type { ItemType, ReminderItem } from "../types/item";
 import { getItemStatus } from "./itemStatus";
 
@@ -37,7 +38,11 @@ export function completionTime(item: ReminderItem, now: Date): number | null {
 }
 
 export function calculateAnalytics(items: ReminderItem[], period: AnalyticsPeriod, now = new Date(), weekStartsOn: 0 | 1 = 1, filters: AnalyticsFilters = {}) {
-  const matching = items.filter(item => matchesAnalyticsFilters(item, filters));
+  const history = items.flatMap(item => (item.occurrenceHistory ?? []).filter(row => row.scheduledAt !== item.startAt).map(row => ({
+    ...item, dailySeries: undefined, startAt: row.scheduledAt, status: row.status, completed: row.status === "Done",
+    completedAt: row.completedAt, completionNote: row.completionNote, occurrenceHistory: undefined,
+  })));
+  const matching = [...items.filter(item => !item.dailySeries?.active || localDateKey(item.startAt) <= localDateKey(now)), ...history].filter(item => !item.preview && matchesAnalyticsFilters(item, filters));
   const monday = weekStart(now, weekStartsOn);
   const from = period === "week" ? monday : new Date(now.getFullYear(), now.getMonth(), 1);
   const to = period === "week"

@@ -16,6 +16,10 @@ function load(file, imports, extras = {}) {
     compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true, target: ts.ScriptTarget.ES2020 },
   }).outputText, { module, exports: module.exports, Error, ...extras, require: name => {
     if (name === 'react' || name === 'react/jsx-runtime') return require(name);
+    if (name.endsWith('sessionTransport')) return { authenticatedFetch: (...args) => fetchImpl(...args), bindSessionTransport: () => () => {}, revokeRemoteSession: async () => {} };
+    if (name === 'react-native' && !imports[name]) return { AppState: { addEventListener: () => ({ remove() {} }) } };
+    if (name.endsWith('apiConfig')) return { API_BASE_URL: 'https://notiva.test' };
+    if (name === 'expo-router' && !imports[name]) return { router: { push() {}, replace: route => routes.push(route) } };
     if (name.endsWith('itemAccount')) return { selectItemAccount() {} };
     if (Object.hasOwn(imports, name)) return imports[name];
     throw Error(`Unexpected dependency or personal data operation: ${name}`);
@@ -29,7 +33,7 @@ const input = ({ accessibilityLabel, label, value, onChangeText, placeholder, ed
   'aria-label': accessibilityLabel || label, value: value || '', placeholder, disabled: editable === false,
   type: secureTextEntry ? 'password' : 'text', onInput: event => onChangeText(event.target.value),
 });
-const native = { View: view, Text: view, ScrollView: view, KeyboardAvoidingView: view, ActivityIndicator: () => null,
+const native = { Alert: { alert() {} }, View: view, Text: view, ScrollView: view, KeyboardAvoidingView: view, ActivityIndicator: () => null,
   TextInput: input, Pressable: ({ children, onPress, disabled, accessibilityLabel }) => React.createElement('button', { onClick: onPress, disabled, "aria-label": accessibilityLabel }, children),
   StyleSheet: { create: value => value }, Platform: { OS: 'android' } };
 const profileUI = { ui: {}, Action: ({ label, onPress, busy, disabled }) => React.createElement('button', { onClick: onPress, disabled: busy || disabled }, label),
@@ -46,11 +50,11 @@ const Forgot = load('app/screens/login/ForgotPasswordScreen.tsx', {
   '../../../components/profile/ProfileUI': profileUI, '../../../services/recoveryService': { recoveryRequest: request },
   '../../../utils/notivaId': validation,
 }, clock).default;
-let stored, auth, updates = [], failSessionWrite = false;
+let stored, auth, updates = [], failSessionWrite = false, allowLogout = false;
 const context = load('contexts/AuthContext.tsx', { '../services/authStorage': {
   readAuthSession: async () => stored,
   writeAuthSession: async value => { if (failSessionWrite) throw Error('Storage unavailable'); stored = value; },
-  clearAuthSession: () => assert.fail('must not logout or clear session'),
+  clearAuthSession: async () => { assert.ok(allowLogout, 'only deliberate password change/session logout may clear authentication'); stored = null; },
 } });
 let suggestionCalls = [], availabilityCalls = [];
 const identityAPI = {
@@ -237,10 +241,10 @@ async function type(label, value) {
   assert.ok(registerButton); await act(async () => registerButton.click());
   const payload = JSON.parse(calls[0][1].body);
   assert.equal(payload.notivaId, 'JOTHI-07');
-  assert.equal(stored.token, 'registration-token'); assert.equal(stored.user.notivaId, 'JOTHI-07');
-  assert.deepEqual(routes, ['/(tabs)']); assert.equal(payload.recoveryEmail, 'recovery@example.com');
+  assert.equal(stored, null); assert.equal(document.querySelector('input[placeholder="Enter password"]').value, '');
+  assert.deepEqual(routes, ['/']); assert.equal(payload.recoveryEmail, 'recovery@example.com');
   assert.equal(payload.email, undefined); assert.equal(payload.confirmPassword, 'secret123');
-  console.log('PASS debounced suggestion, manual edit preservation, final ID payload, full-session persistence and automatic tabs navigation');
+  console.log('PASS debounced suggestion, manual edit preservation, final ID payload, no auth persistence and return to Login');
   const runDebounce = async () => { await act(async () => { for (const [id, timer] of [...timers]) if (timer.ms === 400) { timers.delete(id); timer.fn(); } }); };
   let resolveSuggestion;
   const originalSuggestion = identityAPI.suggestNotivaId;
@@ -279,11 +283,11 @@ async function type(label, value) {
   failSessionWrite = true;
   fetchImpl = async () => ({ ok: true, json: async () => ({ token: 'new-account-token', user: { ...user, notivaId: 'Available-ID' } }) });
   await act(async () => createButton().click());
-  assert.equal(stored, null); assert.deepEqual(routes, []);
-  assert.ok(document.body.textContent.includes('your session could not be saved'));
+  assert.equal(stored, null); assert.deepEqual(routes, ['/']);
+  assert.ok(document.body.textContent.includes('Account created successfully'));
   assert.equal(createButton().disabled, true);
   failSessionWrite = false;
-  console.log('PASS available feedback and session persistence failure prevent navigation and duplicate account creation');
+  console.log('PASS available feedback and registration ignores auth storage and prevents duplicate account creation');
 
   fetchImpl = async (url, options) => { sent = { url, options }; return { ok: true, json: async () => url.includes('suggestion') ? { suggestedNotivaId: 'name-000001' } : { available: false } }; };
   const signal = new AbortController().signal;
@@ -307,6 +311,24 @@ async function type(label, value) {
   assert.equal(stored.token, 'fresh-access-token'); assert.deepEqual(stored.user, user);
   assert.ok(document.body.textContent.includes('Password updated. You remain signed in.'));
   console.log('PASS password-change screen persists replacement token and complete user before reporting success');
+  allowLogout = true;
+  stored = { token: 'current', sessionId: 'own-session', refreshToken: 'own-refresh', user };
+  changeHandler = async () => ({ requiresLogin: true, message: 'Password updated. Please sign in again.' });
+  await mount(React.createElement(context.AuthProvider, null, React.createElement(ChangePassword)));
+  await type('Current Password', 'old-password'); await type('New Password', 'new-password'); await type('Confirm New Password', 'new-password');
+  await click('Update Password'); assert.equal(stored, null); assert.deepEqual(routes, ['/']);
+  console.log('PASS password change clears current auth and returns to normal login');
+  const Sessions = load('app/screens/profile/SessionsScreen.tsx', {
+    'react-native': native, '../../../contexts/AuthContext': context,
+    '../../../components/profile/ProfileUI': { ...profileUI, ProfilePage: view },
+  }, { AbortController, setTimeout, clearTimeout }).default;
+  stored = { token: 'current', sessionId: 'own-session', user };
+  fetchImpl = async () => ({ ok: true, json: async () => ({ sessions: [{ sessionId: 'own-session', deviceName: 'Long device name '.repeat(5), platform: 'android', lastSeenAt: '2026-01-01', current: true, active: true }] }) });
+  await mount(React.createElement(context.AuthProvider, null, React.createElement(Sessions)));
+  assert.ok(document.body.textContent.includes('Current device')); assert.ok(document.body.textContent.includes('Active now'));
+  assert.ok(document.body.textContent.includes('Last active:')); await click('Sign out'); assert.equal(stored, null);
+  assert.ok(fs.readFileSync(path.join(__dirname, '../app/_layout.tsx'), 'utf8').includes('<Stack.Screen name="screens/profile/SessionsScreen" />'));
+  console.log('PASS Devices / Sessions current device metadata, status, sign out and protected route');
   await act(async () => root.unmount());
-  console.log('PASS no reminder, alarm, storage-clear or logout dependencies invoked');
+  console.log('PASS auth changes never invoke reminder or alarm deletion');
 })().catch(error => { console.error(error); process.exitCode = 1; });

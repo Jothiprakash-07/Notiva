@@ -115,6 +115,7 @@ export default function ActionRequiredStack({
   const [busy, setBusy] =
     useState(false);
 
+  const completionOccurrence = useRef<{ id: string; startAt: string } | undefined>(undefined);
   const [showCompletion, setShowCompletion] = useState(false);
 
   const [menu, setMenu] =
@@ -391,10 +392,13 @@ export default function ActionRequiredStack({
       if (
         action === "done"
       ) {
+        if (completionOccurrence.current && (completionOccurrence.current.id !== front.id || completionOccurrence.current.startAt !== front.startAt))
+          throw new Error("This occurrence has changed. Reopen the current item.");
         const saved =
           await toggleComplete(
             front.id,
-            completionNote
+            completionNote,
+            front.startAt
           );
 
         if (
@@ -557,7 +561,7 @@ export default function ActionRequiredStack({
 
     setMenu(false);
     if (action === "done") {
-      if (!locked.current && front && !front.completed && getItemStatus(front) !== "Done") setShowCompletion(true);
+      if (!locked.current && front && !front.completed && getItemStatus(front) !== "Done") { completionOccurrence.current = { id: front.id, startAt: front.startAt }; setShowCompletion(true); }
       return;
     }
 

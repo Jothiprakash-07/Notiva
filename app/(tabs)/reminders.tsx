@@ -1,3 +1,4 @@
+import { itemsForDate, visibleCurrentItems, historyItems } from "../../utils/dailyRecurrence";
 import DateTimePicker, { DateTimePickerEvent } from "@react-native-community/datetimepicker";
 import CompletionNoteModal from "../../components/common/CompletionNoteModal";
 import { formatDate, formatTime } from "../../utils/dateFormat";
@@ -359,7 +360,9 @@ export default function RemindersScreen() {
     const from = dateRange.from ? localDay(dateRange.from).getTime() : null;
     // Exclusive next-day bound includes every instant of the selected To Date.
     const until = dateRange.to ? localDay(dateRange.to, true).getTime() : null;
-    const matching = items.filter(item => {
+    const requested = dateRange.from ?? dateRange.to;
+    const source = requested ? itemsForDate(items, requested) : [...visibleCurrentItems(items), ...historyItems(items)];
+    const matching = source.filter(item => {
       if (selectedFilter === "done" && !isCountedAsDone(item)) return false;
       if (selectedFilter === "overdue" && !isCountedAsOverdue(item)) return false;
       if (selectedFilter === "pending") {
@@ -404,7 +407,7 @@ export default function RemindersScreen() {
   const selectAll = () => {
     if (deleteLock.current) return;
     selectionVersion.current += 1;
-    setSelectedIds(allVisibleSelected ? new Set() : new Set(filteredItems.map(item => item.id)));
+    setSelectedIds(allVisibleSelected ? new Set() : new Set(filteredItems.filter(item => !item.preview && !item.historical).map(item => item.id)));
   };
   const changeSearch = (text: string) => {
     if (deleteLock.current) return;
@@ -413,7 +416,7 @@ export default function RemindersScreen() {
   };
   const requestDelete = () => {
     if (deleteLock.current || confirmationPending.current || !selectedIds.size) return;
-    const ids = filteredItems.filter(item => selectedIds.has(item.id)).map(item => item.id);
+    const ids = filteredItems.filter(item => !item.preview && !item.historical && selectedIds.has(item.id)).map(item => item.id);
     if (!ids.length) return;
     const version = selectionVersion.current;
     confirmationPending.current = true;
@@ -448,10 +451,12 @@ export default function RemindersScreen() {
     ], { cancelable: true, onDismiss: () => { confirmationPending.current = false; } });
   };
 
+  const completionOccurrence = useRef<string | undefined>(undefined);
   const [completionItemId, setCompletionItemId] = useState<string | null>(null);
   const [completionSaving, setCompletionSaving] = useState(false);
 
   const handleToggle = (id: string) => {
+    completionOccurrence.current = items.find(item => item.id === id)?.startAt;
     if (selectionActive.current || deleteLock.current) return;
     const selected = items.find(item => item.id === id);
     if (selected && !selected.completed && selected.status !== "Done") setCompletionItemId(id);
@@ -461,7 +466,7 @@ export default function RemindersScreen() {
     if (!completionItemId || completionSaving) return;
     setCompletionSaving(true);
     try {
-      const updated = await toggleComplete(completionItemId, note);
+      const updated = await toggleComplete(completionItemId, note, completionOccurrence.current);
       if (!updated?.completed) throw new Error("Item could not be completed.");
       await refresh();
       setCompletionItemId(null);
@@ -765,6 +770,8 @@ export default function RemindersScreen() {
                     }
                   >
                     <ReminderCard
+                      preview={item.preview}
+                      historical={item.historical}
                       id={item.id}
                       title={
                         item.title

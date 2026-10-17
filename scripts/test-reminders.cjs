@@ -25,7 +25,16 @@ function harness() {
     scheduleNotificationAsync: async (value) => { scheduled.push(value); return `id-${scheduled.length}`; },
     cancelScheduledNotificationAsync: async (id) => { cancelled.push(id); },
   };
-  const native = { Platform: { OS: 'android' }, Alert: { alert: (...args) => alerts.push(args) }, Linking: { openSettings: async () => {} } };
+  const alarms = new Map();
+  const bridge = {
+    setAlarmSound: async () => {}, canSchedule: async () => true, canFullScreen: async () => true,
+    nativePreAlertsVersion: async () => 1, dailyOccurrencesVersion: async () => 1,
+    weeklyOccurrencesVersion: async () => 1, weekdaysOccurrencesVersion: async () => 1,
+    setPreAlertSettings: async () => {}, hasSchedule: async id => alarms.has(id),
+    schedule: async raw => { const data = JSON.parse(raw); alarms.set(data.id, data); return data.id; },
+    cancel: async id => { cancelled.push(id); alarms.delete(id); },
+  };
+  const native = { NativeModules: { NotivaAlarm: bridge }, Platform: { OS: 'android' }, Alert: { alert: (...args) => alerts.push(args) }, Linking: { openSettings: async () => {} } };
   const filesystem = { Paths: { document: 'documents' }, File: class {
     constructor(dir, file) { this.key = dir + '/' + file; }
     get exists() { return stored.has(this.key); }
@@ -38,32 +47,29 @@ function harness() {
     const module = { exports: {} }; cache.set(file,module);
     const code = ts.transpileModule(fs.readFileSync(file,'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText;
     vm.runInNewContext(code, { module, exports: module.exports, __DEV__: true, console: { log() {}, warn() {} }, Date, Error, setTimeout,
-      require: (id) => id === 'expo-notifications' ? notifications : id === 'react-native' ? native : id === 'expo-file-system' ? filesystem : load(path.relative(root,path.resolve(path.dirname(file), id + '.ts'))),
+      require: (id) => id === './itemAccount' ? { getItemAccount: () => undefined, accountAlarmId: id => id, localAlarmItemId: id => id, ownsAlarmItemId: () => true } : id === './notificationHistory' ? { recordNotification: async () => {} } : id === 'expo-notifications' ? notifications : id === 'react-native' ? native : id === 'expo-file-system' ? filesystem : load(path.relative(root,path.resolve(path.dirname(file), id + '.ts'))),
     }, { filename: file });
     return module.exports;
   }
-  return { filesystem, load, scheduled, cancelled, alerts, notifications, setPermission: (p) => { permission = p; }, requests: () => requests, handler: () => handler, reloadStorage: () => { cache.delete(path.join(root, 'services/itemStorage.ts')); return load('services/itemStorage.ts'); } };
+  return { bridge, alarms, filesystem, load, scheduled, cancelled, alerts, notifications, setPermission: (p) => { permission = p; }, requests: () => requests, handler: () => handler, reloadStorage: () => { cache.delete(path.join(root, 'services/itemStorage.ts')); return load('services/itemStorage.ts'); } };
 }
 (async () => {
   const h = harness(); const service = h.load('services/notificationService.ts'); const status = h.load('utils/itemStatus.ts');
   let storage = h.load('services/itemStorage.ts');
   const now = Date.now();
   const item = { id: 'test', type: 'reminder', title: 'Notification Test', description: '', category: 'Personal', repeat: 'none', priority: 'Medium', startAt: new Date(now + 120000).toISOString(), alertBefore: { label: 'At Time', minutes: 0 }, completed: false, notificationIds: [], createdAt: new Date(now).toISOString(), updatedAt: new Date(now).toISOString() };
-  assert.equal((await service.getNotificationSettings()).repeatCount, 1);
-  await service.saveNotificationSettings({ repeatCount: 3, repeatIntervalSeconds: 5, vibration: true });
+  await service.saveNotificationSettings({ vibration: true });
   const ids = await service.scheduleItemNotifications(item);
-  assert.equal(ids.length, 3); assert.equal(h.scheduled[0].trigger.date.getTime(), now + 120000);
-  assert.equal(h.scheduled[0].trigger.channelId, 'reminders'); assert.equal(h.scheduled[0].content.sound, 'default');
-  assert.equal(h.scheduled[0].content.data.itemId, item.id);
-  assert.equal(h.notifications.channel.importance, 4); assert.equal(h.notifications.channel.enableVibrate, true);
-  const behavior = await h.handler().handleNotification(); assert.equal(behavior.shouldShowBanner, true); assert.equal(behavior.shouldPlaySound, true);
+  assert.equal(ids.length, 1);
+  assert.equal(h.alarms.get(ids[0]).startAt, now + 120000);
+  assert.equal(h.alarms.get(ids[0]).itemId, item.id);
+  assert.equal(h.alarms.get(ids[0]).vibration, true);
+  assert.equal(h.scheduled.length, 0, 'main alarm is native, no Expo burst');
   const testNow = Date.now();
   const testId = await service.scheduleTestNotification();
-  assert.equal(testId, 'id-4'); assert.equal(h.scheduled.length, 4);
-  assert.equal(h.scheduled[3].trigger.type, 'date');
-  assert.ok(h.scheduled[3].trigger.date.getTime() >= testNow + 10000);
-  assert.ok(h.scheduled[3].trigger.date.getTime() <= Date.now() + 10000);
-  assert.equal(h.scheduled[3].content.sound, 'default');
+  assert.ok(h.alarms.has(testId));
+  assert.ok(h.alarms.get(testId).startAt >= testNow + 45000);
+  assert.ok(h.alarms.get(testId).startAt <= Date.now() + 45000);
   const before = { ...item, startAt: new Date(now + 3600000).toISOString(), alertBefore: { label: '10 Minutes Before', minutes: 10 } };
   assert.equal(service.notificationDateFor(before).getTime(), now + 3000000);
   assert.equal((await service.scheduleItemNotifications({ ...item, startAt: new Date(now - 1000).toISOString() })).length, 0);
@@ -101,21 +107,21 @@ function harness() {
     assert.equal((await storage.getItemById(overdue.id)).completed, false);
     await assert.rejects(storage.rescheduleItem(overdue), /future/);
     const count = (await storage.getItems()).length;
-    const originalSchedule = h.notifications.scheduleNotificationAsync;
-    h.notifications.scheduleNotificationAsync = async (value) => {
+    const originalSchedule = h.bridge.schedule;
+    h.bridge.schedule = async (value) => {
       assert.ok(h.cancelled.includes('old-' + type), 'Cancel old notifications before scheduling');
       return originalSchedule(value);
     };
     const updated = await storage.rescheduleItem({ ...overdue, startAt: new Date(now + 3600000).toISOString(), completed: true, status: 'Done', alertBefore: { label: '10 Minutes Before', minutes: 10 } });
-    h.notifications.scheduleNotificationAsync = originalSchedule;
+    h.bridge.schedule = originalSchedule;
     assert.equal(updated.id, overdue.id);
     assert.equal(updated.completed, false);
     assert.equal(updated.status, undefined);
     assert.equal(status.getItemStatus(updated), 'Pending');
-    assert.equal(updated.notificationIds.length, 3);
+    assert.equal(updated.notificationIds.length, 1);
     assert.equal((await storage.getItems()).length, count);
     assert.equal((await storage.getItemById(updated.id)).notificationIds[0], updated.notificationIds[0]);
-    assert.equal(h.scheduled.at(-3).trigger.date.getTime(), now + 3000000);
+    assert.equal(h.alarms.get(updated.notificationIds[0]).preAlertMinutes, 10);
     await storage.toggleComplete(updated.id);
     await assert.rejects(storage.rescheduleItem(updated), /cannot be rescheduled/);
   }
@@ -149,10 +155,10 @@ function harness() {
     h.filesystem.File.prototype.write = write;
     assert.equal(sorting.isActionRequired(await storage.getItemById(late.id)), true);
   }
-  const schedule = h.notifications.scheduleNotificationAsync;
-  h.notifications.scheduleNotificationAsync = async () => { throw new Error('native scheduling failure'); };
+  const schedule = h.bridge.schedule;
+  h.bridge.schedule = async () => { throw new Error('native scheduling failure'); };
   await assert.rejects(storage.rescheduleItem({ ...late, startAt: item.startAt }), /native scheduling failure/);
-  h.notifications.scheduleNotificationAsync = schedule;
+  h.bridge.schedule = schedule;
   assert.equal(sorting.isActionRequired(await storage.getItemById(late.id)), true);
   assert.equal((await storage.getItemById(late.id)).notificationIds.length, 0);
   let writes = 0;
@@ -160,52 +166,22 @@ function harness() {
   await assert.rejects(storage.rescheduleItem({ ...late, startAt: item.startAt }), /final save failed/);
   h.filesystem.File.prototype.write = write;
   assert.equal(sorting.isActionRequired(await storage.getItemById(late.id)), true);
-  assert.ok(h.cancelled.includes('id-' + h.scheduled.length), 'Cancel new notification after failed final save');
+  assert.ok(h.cancelled.includes('native-alarm:' + late.id), 'Cancel new notification after failed final save');
   await storage.deleteItem(late.id);
   assert.equal(await h.reloadStorage().getItemById(late.id), undefined);
   console.log('PASS: Action Required eligibility, old-data compatibility, Done, Skip, Delete, restart persistence, sorting and injected write/scheduling failures.');
   console.log('PASS: Reschedule preserves ID/count, cancels first, resets stale status, stores new IDs, validates future dates, and rejects Done items.');
 
   for (const type of ['reminder', 'task', 'event', 'birthday']) {
-    const startIndex = h.scheduled.length;
-    const burst = await service.scheduleItemNotifications({ ...before, type });
-    assert.equal(burst.length, 3);
-    assert.equal(h.scheduled[startIndex + 2].trigger.date - h.scheduled[startIndex].trigger.date, 10000);
+    const pair = await service.scheduleItemNotifications({ ...before, type });
+    assert.equal(pair.length, 1); assert.equal(h.alarms.get(pair[0]).preAlertMinutes, 10);
   }
-  for (const repeatCount of [1, 3, 5]) for (const repeatIntervalSeconds of [3, 5, 10]) {
-    await service.saveNotificationSettings({ repeatCount, repeatIntervalSeconds, vibration: false });
-    assert.equal((await service.getNotificationSettings()).repeatCount, repeatCount);
-    const startIndex = h.scheduled.length;
-    const burst = await service.scheduleItemNotifications(item);
-    assert.equal(burst.length, repeatCount);
-    assert.equal(h.scheduled.at(-1).trigger.date - h.scheduled[startIndex].trigger.date, (repeatCount - 1) * repeatIntervalSeconds * 1000);
-  }
-  h.notifications.channel.sound = 'user-selected';
+  await service.saveNotificationSettings({ vibration: false });
+  assert.equal((await service.getNotificationSettings()).vibration, false);
   await service.resetNotificationSettings();
-  assert.equal(h.notifications.channel.sound, 'user-selected');
-  await service.saveNotificationSettings({ repeatCount: 999, repeatIntervalSeconds: -1, vibration: 'bad' });
-  assert.equal((await service.getNotificationSettings()).repeatCount, 1);
-  await service.saveNotificationSettings({ repeatCount: 3, repeatIntervalSeconds: 5, vibration: true });
-  assert.equal((await service.getNotificationSettings()).vibration, true);
-  for (const repeat of ['none', 'weekdays']) {
-    let calls = 0;
-    const count = h.scheduled.length;
-    h.notifications.scheduleNotificationAsync = async value => {
-      if (++calls === 2) throw new Error('partial schedule failure');
-      return schedule(value);
-    };
-    await assert.rejects(service.scheduleItemNotifications({ ...item, repeat }, true), /partial schedule failure/);
-    assert.ok(h.cancelled.includes('id-' + (count + 1)));
-  }
-  let testCalls = 0;
-  const testStart = h.scheduled.length;
-  h.notifications.scheduleNotificationAsync = async value => {
-    if (++testCalls === 1) throw new Error('test failure');
-    return schedule(value);
-  };
-  assert.equal(await service.scheduleTestNotification(), undefined);
-  assert.equal(h.scheduled.length, testStart);
-  h.notifications.scheduleNotificationAsync = schedule;
+  h.bridge.schedule = async () => { throw new Error('test failure'); };
+  await assert.rejects(service.scheduleTestNotification(), /test failure/);
+  h.bridge.schedule = schedule;
   const cancel = h.notifications.cancelScheduledNotificationAsync;
   h.notifications.cancelScheduledNotificationAsync = async id => {
     if (id === 'bad') throw new Error('cancel failure');
@@ -227,15 +203,17 @@ function harness() {
   assert.equal(await responseService.consumeNotificationResponse(response), undefined);
   assert.equal(await responseService.consumeNotificationResponse({ ...response, notification: { ...response.notification, request: { ...response.notification.request, content: { data: { itemId: [] } } } } }), undefined);
   for (const repeat of ['daily', 'weekly', 'weekdays', 'monthly', 'yearly']) {
-    assert.equal((await service.scheduleItemNotifications({ ...item, repeat }, true)).length, repeat === 'weekdays' ? 5 : 1);
+    assert.equal((await service.scheduleItemNotifications({ ...item, repeat }, true)).length, 1);
   }
   const originalNext = h.notifications.getNextTriggerDateAsync;
   h.notifications.getNextTriggerDateAsync = async () => now;
-  await assert.rejects(service.scheduleItemNotifications({ ...before, repeat: 'daily' }, true), /cannot start/);
+  assert.equal((await service.scheduleItemNotifications({ ...before, repeat: 'daily' }, true)).length, 1, 'expired pre-alert cannot reject the main alarm');
   h.notifications.getNextTriggerDateAsync = originalNext;
-  assert.throws(() => service.createRecurringTriggers({ ...item, repeat: 'monthly', startAt: new Date(2030, 2, 1, 0, 0).toISOString(), alertBefore: { minutes: 5 } }), /month boundary/);
-  console.log('PASS: all item types, all burst settings, settings validation, channel preservation, partial rollback, isolated cancellation failures, response deduplication and status preservation.');
+  const boundary = await service.scheduleItemNotifications({ ...item, repeat: 'monthly', startAt: new Date(2030, 2, 1, 0, 0).toISOString(), alertBefore: { minutes: 5 } });
+  assert.equal(h.alarms.get(boundary[0]).preAlertMinutes, 5);
+  assert.equal(new Date(h.alarms.get(boundary[0]).startAt).getDate(), 1);
+  console.log('PASS: all item types, native main/pre-alert settings, scheduling rollback, isolated cancellation failures, response deduplication and status preservation.');
   h.setPermission({ granted: false, canAskAgain: false, status: 'denied' }); assert.equal(await service.prepareNotifications(), false); assert.equal(h.requests(), 0); assert.ok(h.alerts.length);
   h.setPermission({ granted: false, canAskAgain: true, status: 'denied' }); await service.prepareNotifications(); await service.prepareNotifications(); assert.equal(h.requests(), 1);
-  console.log('PASS: schedule dates/offsets, single ten-second DATE trigger, channel/handler/content, native persistence reload, read-only guards, cancellation, denied permission and prompt throttling (mocked native APIs).');
+  console.log('PASS: schedule dates/offsets, 45-second native test, native persistence reload, read-only guards, cancellation, denied permission and prompt throttling (mocked native APIs).');
 })().catch((error) => { console.error(error); process.exitCode = 1; });

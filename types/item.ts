@@ -33,17 +33,23 @@ export type AlertBefore = {
 };
 
 export type ReminderItem = {
-  syncStatus?: "pending_create" | "pending_update" | "pending_delete" | "synced" | "sync_error";
+  syncStatus?: "pending_create" | "pending_update" | "pending_delete" | "synced" | "sync_error" | "conflict";
+  conflict?: ItemConflict;
   serverRevision?: number;
   serverUpdatedAt?: string;
   lastSyncedAt?: string;
   /** Device-only restore intent, never sent to the server. */
   restoreNeedsScheduling?: boolean;
   id: string;
-  /** One stable series ID; each dated occurrence retains its own item ID. */
+  /** Stable master identity for derived occurrences. */
   seriesId?: string;
   /** Stored only on the original occurrence, even after it is completed. */
   dailySeries?: DailySeries;
+  occurrenceKey?: string;
+  occurrenceHistory?: OccurrenceResult[];
+  /** Presentation only; never persisted. */
+  preview?: boolean;
+  historical?: boolean;
   completedAt?: string;
   dailyHidden?: boolean;
 
@@ -92,9 +98,18 @@ export type ReminderItem = {
   updatedAt: string;
 };
 
+/** Device-only evidence; excluded from itemPayload and server writes. */
+export type ItemConflict = {
+  expectedRevision?: number;
+  serverRevision?: number;
+  detectedAt: string;
+  serverItem?: ReminderItem;
+};
+
 export type DailySeries = {
+  masterVersion?: 1;
   /** Legacy storage name retained for compatibility with existing Daily data. */
-  repeat?: "daily" | "weekly" | "weekdays";
+  repeat?: Exclude<RepeatType, "none">;
   active: boolean;
   firstAt: string;
   templateId: string;
@@ -103,3 +118,5 @@ export type DailySeries = {
   notificationIds: string[];
   dirty: boolean;
 };
+
+export type OccurrenceResult = { occurrenceKey: string; scheduledAt: string; status: ItemStatus; completedAt?: string; completionNote?: string; actionResolved?: boolean };

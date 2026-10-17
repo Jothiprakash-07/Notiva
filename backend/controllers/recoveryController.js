@@ -1,3 +1,4 @@
+import { revokeSessions } from "../services/sessions.js";
 import { createHash, createHmac, randomInt, randomBytes, timingSafeEqual } from "node:crypto";
 import bcrypt from "bcryptjs";
 import User from "../models/user.js";
@@ -153,6 +154,7 @@ export async function resetPassword(req, res) {
       $expr: { $and: [{ $eq: ["$password", "$resetAuthorizationPasswordHash"] }, { $eq: ["$recoveryEmail", "$resetAuthorizationEmail"] }] },
     }, { $set: { password: await bcrypt.hash(newPassword, 10) }, $inc: { tokenVersion: 1 }, $unset: resetFields }, { returnDocument: "after" });
     if (!user) return res.status(400).json({ message: "The password reset authorization is invalid or has expired." });
+    if (user.sessionEnforced) await revokeSessions(user._id, "password_reset", user.tokenVersion);
     res.json({ success: true, message: "Password reset successful." });
   } catch { res.status(503).json({ message: "Unable to reset your password right now. Please try again." }); }
 }

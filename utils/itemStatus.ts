@@ -1,3 +1,4 @@
+import { occurrenceOn, localDateKey } from "./dailyRecurrence";
 import {
   ItemStatus,
   ReminderItem,
@@ -7,6 +8,7 @@ export function getItemStatus(
   item: ReminderItem,
   now = new Date()
 ): ItemStatus {
+  if (item.preview) return "Upcoming";
   if (item.type === "birthday") {
     return "Upcoming";
   }
@@ -97,24 +99,33 @@ export function findScheduleConflicts(items: ReminderItem[], candidate: Reminder
   const dayKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
   const seen = new Set<string>();
   return items.filter(item => {
-    if (item.id === candidate.id || item.completed || item.actionResolved || item.syncStatus === "pending_delete" ||
+    if (item.preview || item.id === candidate.id || item.syncStatus === "pending_delete") return false;
+    if (item.dailySeries) {
+      if (candidate.seriesId === item.id || !item.dailySeries.active) return false;
+      const due = occurrenceOn(item, target);
+      if (!due || due.getHours() !== target.getHours() || due.getMinutes() !== target.getMinutes()) return false;
+      if (item.dailySeries.excludedDates.includes(localDateKey(target))) return false;
+      const key = `${item.id}:${localDateKey(target)}`;
+      if (seen.has(key)) return false;
+      seen.add(key); return true;
+    }
+    if (item.id === candidate.id || item.completed || item.actionResolved ||
         ["Done", "Completed", "Cancelled"].includes(getItemStatus(item, now))) return false;
     const start = new Date(item.startAt);
     if (!Number.isFinite(start.getTime()) || start.getHours() !== target.getHours() || start.getMinutes() !== target.getMinutes()) return false;
     const exactDay = dayKey(start) === dayKey(target);
     // Generated series rows already represent one actual date. Only anchors
     // and standalone repeating schedules may project another occurrence.
-    const anchor = !item.seriesId || Boolean(item.dailySeries);
+    const anchor = !item.seriesId;
     let occurs = exactDay && !item.dailyHidden;
     if (!occurs && anchor && start <= target && item.repeat !== "none") {
-      const repeat = item.dailySeries?.repeat ?? item.repeat;
+      const repeat = item.repeat;
       occurs = repeat === "daily" ||
         (repeat === "weekly" && (item.weeklyDays ?? [start.getDay()]).includes(target.getDay())) ||
         (repeat === "weekdays" && target.getDay() !== 0 && target.getDay() !== 6) ||
         (repeat === "monthly" && start.getDate() === target.getDate()) ||
         (repeat === "yearly" && start.getMonth() === target.getMonth() && start.getDate() === target.getDate());
     }
-    if (item.dailySeries && (!item.dailySeries.active || item.dailySeries.excludedDates.includes(dayKey(target)))) return false;
     if (item.dailyHidden && exactDay) return false;
     // Editing an occurrence must not conflict with its own series projection.
     if (candidate.seriesId && candidate.seriesId === (item.seriesId ?? item.id)) return false;

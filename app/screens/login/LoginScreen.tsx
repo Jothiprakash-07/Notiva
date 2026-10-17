@@ -1,3 +1,4 @@
+import { getLoginDevice } from "../../../services/deviceIdentity";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { API_BASE_URL } from "../../../services/apiConfig";
 import { Redirect, router } from "expo-router";
@@ -43,6 +44,7 @@ export default function LoginScreen({
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
+  const [conflict, setConflict] = useState<{ transferToken: string; userId: string; deviceId: string; deviceName: string; lastSeenAt?: string } | null>(null);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -98,25 +100,39 @@ export default function LoginScreen({
     }
 
     submittingRef.current = true;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
     try {
       setSubmitting(true);
 
+      const device = await getLoginDevice();
       const response = await fetch(
         API_BASE_URL + "/api/auth/login",
         {
-          method: "POST",
+          method: "POST", signal: controller.signal,
 
           headers: {
             "Content-Type": "application/json",
           },
 
           body: JSON.stringify({
+            ...device,
             identifier: trimmedEmail.toLowerCase(),
             password,
           }),
         }
       );
 
+      if (response.status === 409) {
+        const data = await response.json();
+        if (data.code === "ACTIVE_SESSION_EXISTS" && typeof data.transferToken === "string" && typeof data.userId === "string") {
+          setConflict({ transferToken: data.transferToken, userId: data.userId, deviceId: device.deviceId,
+            deviceName: typeof data.activeSession?.deviceName === "string" ? data.activeSession.deviceName.slice(0, 80) : "Another device",
+            lastSeenAt: data.activeSession?.lastSeenAt });
+          setPassword("");
+          return;
+        }
+      }
       if (!response.ok) {
         // Use local messages; server bodies may contain internal diagnostics.
         setError(response.status === 401
@@ -128,6 +144,7 @@ export default function LoginScreen({
       const data = await response.json();
 
       if (
+        typeof data?.refreshToken !== "string" || !data.refreshToken || typeof data?.sessionId !== "string" || !data.sessionId ||
         typeof data?.token !== "string" || !data.token.trim() ||
         typeof data?.user?.id !== "string" || !data.user.id.trim() ||
         typeof data?.user?.fullName !== "string" || !data.user.fullName.trim()
@@ -138,6 +155,7 @@ export default function LoginScreen({
       }
 
       await signIn({
+        sessionId: data.sessionId, refreshToken: data.refreshToken, accessExpiresAt: data.accessExpiresAt,
         token: data.token,
         user: data.user,
       } as AuthSession);
@@ -148,9 +166,30 @@ export default function LoginScreen({
         ? "Unable to connect. Check your connection and try again."
         : "Unable to log in right now. Please try again.");
     } finally {
+      clearTimeout(timer);
       submittingRef.current = false;
       setSubmitting(false);
     }
+  };
+
+  const handleTransfer = async () => {
+    if (!conflict || submittingRef.current) return;
+    submittingRef.current = true; setSubmitting(true); setError("");
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/auth/replace-session`, { method: "POST", signal: controller.signal,
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: conflict.userId,
+          transferToken: conflict.transferToken, deviceId: conflict.deviceId }) });
+      const data = await response.json();
+      if (!response.ok || !data.token || !data.refreshToken || !data.sessionId || data.user?.id !== conflict.userId) {
+        setConflict(null); setError("The session changed or the request expired. Please sign in again."); return;
+      }
+      await signIn({ token: data.token, refreshToken: data.refreshToken, sessionId: data.sessionId,
+        accessExpiresAt: data.accessExpiresAt, user: data.user });
+      setConflict(null); router.replace("/(tabs)");
+    } catch { setConflict(null); setError("Unable to complete sign-in. Please sign in again."); }
+    finally { clearTimeout(timer); submittingRef.current = false; setSubmitting(false); }
   };
 
   const handleUserRegister = () => {
@@ -305,6 +344,22 @@ export default function LoginScreen({
         </ScrollView>
       </KeyboardAvoidingView>
 
+      <Modal visible={Boolean(conflict)} transparent animationType="fade" onRequestClose={() => { if (!submitting) setConflict(null); }}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalBox, { maxHeight: "85%" }]} accessibilityViewIsModal>
+            <ScrollView showsVerticalScrollIndicator={false}>
+            <Text style={styles.modalTitle}>Account already active</Text>
+            <Text style={styles.modalQuestion}>This account is currently active on another device.</Text>
+            <Text style={styles.modalOptionText}>Device: {conflict?.deviceName}</Text>
+            {conflict?.lastSeenAt && Number.isFinite(Date.parse(conflict.lastSeenAt)) ? <Text style={styles.modalOptionText}>Last active: {new Date(conflict.lastSeenAt).toLocaleString()}</Text> : null}
+            <Pressable accessibilityRole="button" disabled={submitting} style={styles.modalOption} onPress={() => void handleTransfer()}>
+              <Text style={[styles.modalOptionTitle, { flexShrink: 1 }]}>{submitting ? "Signing in…" : "Sign out other device & continue"}</Text>
+            </Pressable>
+            <Pressable accessibilityRole="button" disabled={submitting} style={styles.modalOption} onPress={() => setConflict(null)}><Text style={styles.modalOptionTitle}>Cancel</Text></Pressable>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
       {/* Register selection modal */}
       <Modal
         visible={showRegisterPopup}

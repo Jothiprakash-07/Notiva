@@ -6,7 +6,7 @@ import { ReminderItem } from "../types/item";
 import { getItemAccount, accountAlarmId, localAlarmItemId } from "./itemAccount";
 import { commitLocalItems, readItemSyncState, transactItemState } from "./itemSyncQueue";
 import type { ServerItemDeletion } from "./itemSyncQueue";
-import { attachDailySeries, dailyTemplate, localDateKey, materializeDaily } from "../utils/dailyRecurrence";
+import { attachDailySeries, dailyTemplate, localDateKey, materializeDaily, dailyOccurrenceId, occurrenceKey, occurrenceResult, mergeOccurrenceHistory, historyItems } from "../utils/dailyRecurrence";
 import { alignWeeklyItem } from "../utils/weeklyRecurrence";
 
 import {
@@ -23,6 +23,7 @@ import {
 const KEY = "notiva.items.v1";
 let taskAccount: string | null | undefined;
 const restoreListeners = new Set<() => void>();
+export function notifyItemRollover() { restoreListeners.forEach(listener => listener()); }
 export function subscribeItemRestore(listener: () => void) {
   restoreListeners.add(listener);
   return () => { restoreListeners.delete(listener); };
@@ -153,9 +154,40 @@ function mutate<T>(
 }
 
 async function reconcileDaily(items: ReminderItem[], interactive = false): Promise<ReminderItem[]> {
-  // Upgrade active legacy Daily rows once; don't revive previously completed series.
-  const next = materializeDaily(items.map(item =>
-    ["daily", "weekly", "weekdays"].includes(item.repeat) && !item.seriesId && !isItemReadOnly(item) ? attachDailySeries(item) : item));
+  // Only identifiable generated future rows are retired. Historical legacy rows
+  // remain readable until an explicit archival migration can preserve all notes.
+  let upgraded = items.map(item =>
+    ["daily", "weekly", "weekdays", "monthly", "yearly"].includes(item.repeat) && !item.seriesId && !isItemReadOnly(item) ? attachDailySeries(item) : item);
+  upgraded = upgraded.map(root => {
+    if (!root.dailySeries || root.dailySeries.masterVersion === 1) return root;
+    const current = upgraded.find(row => row.seriesId === root.id && row.id !== root.id &&
+      localDateKey(row.startAt) === localDateKey(new Date()) &&
+      row.id === dailyOccurrenceId(root.id, root.dailySeries!.firstAt, new Date(row.startAt), row.repeat));
+    const migrated = { ...root, dailySeries: { ...root.dailySeries, masterVersion: 1 as const, dirty: true } };
+    return current ? { ...migrated, occurrenceHistory: mergeOccurrenceHistory(root.occurrenceHistory, [occurrenceResult(root)]), startAt: current.startAt, completed: current.completed, completedAt: current.completedAt,
+      completionNote: current.completionNote, status: current.status, actionResolved: current.actionResolved } : migrated;
+  });
+  const retained = upgraded.filter(item => {
+    const root = upgraded.find(row => row.id === item.seriesId && row.dailySeries);
+    if (!root || item.id === root.id || item.completed || item.completionNote || new Date(item.startAt) <= new Date()) return true;
+    const generated = dailyOccurrenceId(root.id, root.dailySeries!.firstAt, new Date(item.startAt), item.repeat);
+    const template = root.dailySeries!.template;
+    const unchanged = ["title", "description", "category", "priority", "notes", "alertBefore", "weeklyDays"].every(key =>
+      JSON.stringify(item[key as keyof ReminderItem]) === JSON.stringify(template[key as keyof typeof template]));
+    const start = new Date(item.startAt), anchor = new Date(template.startAt);
+    return item.id !== generated || !unchanged || start.getHours() !== anchor.getHours() || start.getMinutes() !== anchor.getMinutes();
+  });
+  for (const removed of upgraded.filter(item => !retained.some(row => row.id === item.id))) {
+    const root = retained.find(row => row.id === removed.seriesId);
+    if (root?.dailySeries) {
+      root.dailySeries = { ...root.dailySeries, dirty: true, notificationIds: [...new Set([
+        ...root.dailySeries.notificationIds, ...removed.notificationIds,
+        ...(Platform.OS === "android" ? [`${NATIVE_ALARM_PREFIX}${accountAlarmId(removed.id, taskAccount)}`] : []),
+      ])] };
+    }
+  }
+  const next = materializeDaily(retained.map(item => item.dailyHidden && item.dailySeries?.active
+    ? { ...item, dailySeries: { ...item.dailySeries, active: false, dirty: true } } : item));
   if (JSON.stringify(next) !== JSON.stringify(items)) await persist(next);
   for (const root of next) {
     const series = root.dailySeries;
@@ -180,7 +212,7 @@ async function reconcileDaily(items: ReminderItem[], interactive = false): Promi
       // The deterministic master ID also covers a crash after OS scheduling but
       // before the returned ID was persisted to the item file.
       const previous = [...series.notificationIds, ...(Platform.OS === "android"
-        ? [`${NATIVE_ALARM_PREFIX}daily-series:${accountAlarmId(root.id, taskAccount)}`, `${NATIVE_ALARM_PREFIX}weekly-series:${accountAlarmId(root.id, taskAccount)}`, `${NATIVE_ALARM_PREFIX}weekdays-series:${accountAlarmId(root.id, taskAccount)}`] : [])];
+        ? [`${NATIVE_ALARM_PREFIX}daily-series:${accountAlarmId(root.id, taskAccount)}`, `${NATIVE_ALARM_PREFIX}weekly-series:${accountAlarmId(root.id, taskAccount)}`, `${NATIVE_ALARM_PREFIX}weekdays-series:${accountAlarmId(root.id, taskAccount)}`, `${NATIVE_ALARM_PREFIX}monthly-series:${accountAlarmId(root.id, taskAccount)}`, `${NATIVE_ALARM_PREFIX}yearly-series:${accountAlarmId(root.id, taskAccount)}`] : [])];
       const ids = series.active ? await scheduleItemNotifications({
         ...root, ...series.template, repeat: series.repeat ?? "daily", completed: false, status: undefined,
         notificationIds: [],
@@ -201,7 +233,7 @@ async function reconcileRestored(items: ReminderItem[], active: () => boolean) {
     // Existing recurrence reconciler owns recurring schedule deduplication.
     for (const item of items) {
       if (!active()) return;
-      if (!item.restoreNeedsScheduling || item.seriesId || ["daily", "weekly", "weekdays"].includes(item.repeat)) continue;
+      if (!item.restoreNeedsScheduling || item.seriesId || ["daily", "weekly", "weekdays", "monthly", "yearly"].includes(item.repeat)) continue;
       try {
         const previous = item.notificationIds;
         const ids = isItemReadOnly(item) || (item.repeat === "none" && new Date(item.startAt).getTime() <= Date.now())
@@ -226,15 +258,12 @@ export function applyServerDeletions(userId: string, deletions: ServerItemDeleti
         const root = item && state.items.find(row => row.id === item.seriesId);
         for (const id of item?.notificationIds ?? []) cancellations.add(id);
         if (Platform.OS === "android") cancellations.add(`${NATIVE_ALARM_PREFIX}${accountAlarmId(deletion.clientItemId, userId)}`);
-        // Match local occurrence deletion, retaining the template for future
-        // dates and excluding only this occurrence from the native series.
-        if (item && root?.dailySeries) {
-          root.dailySeries.excludedDates = [...new Set([...root.dailySeries.excludedDates, localDateKey(item.startAt)])];
-          root.dailySeries.dirty = true;
-          if (item.id === root.id) root.dailyHidden = true;
+        if (item?.dailySeries) {
+          for (const id of item.dailySeries.notificationIds) cancellations.add(id);
+          for (const repeat of ["daily", "weekly", "weekdays", "monthly", "yearly"])
+            cancellations.add(`${NATIVE_ALARM_PREFIX}${repeat}-series:${accountAlarmId(item.id, userId)}`);
         }
-        state.items = state.items.filter(row => row.id !== deletion.clientItemId ||
-          (row.id === root?.id && Boolean(root?.dailySeries)));
+        state.items = state.items.filter(row => row.id !== deletion.clientItemId && row.seriesId !== deletion.clientItemId);
         state.queue = state.queue.filter(op => op.clientItemId !== deletion.clientItemId);
         Object.defineProperty(state.tombstones, deletion.clientItemId, { value: {
           deletedAt: deletion.deletedAt, synced: true, syncStatus: "synced",
@@ -313,7 +342,7 @@ export function getItems(): Promise<ReminderItem[]> {
     await reconcileRestored(items, () => taskAccount === getItemAccount());
     if (Platform.OS === "android" && (await Notifications.getPermissionsAsync()).granted && await nativeAlarm().canSchedule()) {
       for (const item of items) {
-        if (item.seriesId || ["daily", "weekly", "weekdays"].includes(item.repeat) || isItemReadOnly(item)) continue;
+        if (item.seriesId || ["daily", "weekly", "weekdays", "monthly", "yearly"].includes(item.repeat) || isItemReadOnly(item)) continue;
         if ((!item.repeat || item.repeat === "none") && new Date(item.startAt).getTime() <= Date.now()) continue;
         const id = `${NATIVE_ALARM_PREFIX}${accountAlarmId(item.id, taskAccount)}`;
         if (await nativeAlarm().hasSchedule?.(id) !== false && item.notificationIds.includes(id) && item.notificationIds.length === 1) continue;
@@ -325,57 +354,35 @@ export function getItems(): Promise<ReminderItem[]> {
         } catch { /* Retry missing/migrated pairs on the next foreground read. */ }
       }
     }
-    return (await reconcileDaily(items)).filter(item => !item.dailyHidden);
+    const reconciled = await reconcileDaily(items);
+    return reconciled.filter(item => !item.dailyHidden && !reconciled.some(root => root.dailySeries && root.id !== item.id &&
+      root.id === item.seriesId && localDateKey(root.startAt) === localDateKey(item.startAt)));
   });
 }
 
 async function saveDailyEdit(items: ReminderItem[], item: ReminderItem, existing?: ReminderItem) {
+  if (item.preview || item.historical) throw new Error("Preview is display-only.");
   item = alignWeeklyItem(item);
-  const root = items.find(row => row.id === existing?.seriesId);
-  if (!root?.dailySeries) {
-    const attached = attachDailySeries({ ...item, notificationIds: existing?.notificationIds ?? item.notificationIds });
-    const next = existing ? items.map(row => row.id === item.id ? attached : row) : [...items, attached];
-    await persist(next);
-    await reconcileDaily(next, true);
-    return attached;
-  }
-  const series = root.dailySeries;
-  // Editing a dated row changes this and following occurrences, never history.
-  const cutoff = new Date(existing!.startAt).getTime();
-  let next = items.filter(row => row.id === root.id || row.id === item.id ||
-    row.seriesId !== root.id || isItemReadOnly(row) || new Date(row.startAt).getTime() < cutoff ||
-    new Date(row.startAt).getTime() <= Date.now());
-  const replacement = { ...item, seriesId: root.id, dailySeries: item.id === root.id ? series : undefined };
-  next = next.map(row => row.id === item.id ? replacement : row);
-  series.active = ["daily", "weekly", "weekdays"].includes(item.repeat) && item.status !== "Cancelled";
-  if (series.active) series.repeat = item.repeat as "daily" | "weekly" | "weekdays";
-  series.template = dailyTemplate(item);
-  series.templateId = item.id;
-  series.dirty = true;
-  const removedRows = items.filter(row => !next.some(retained => retained.id === row.id));
-  const obsoleteIds = [...new Set([
-    ...(existing?.notificationIds ?? []),
-    ...removedRows.flatMap(row => [...row.notificationIds, ...(Platform.OS === "android"
-      ? [`${NATIVE_ALARM_PREFIX}${accountAlarmId(row.id, taskAccount)}`] : [])]),
-  ])];
-  // Keep cleanup durable too: restart reconciliation must cancel obsolete alarms
-  // even if the process dies immediately after the updated rows are written.
-  series.notificationIds = [...new Set([...series.notificationIds, ...obsoleteIds])];
-  await persist(next); // Save cancellation intent before touching the OS.
-  // Removed projections may have standalone alarms retained by a previous edit.
-  await cancelNotifications(obsoleteIds);
-  // A future occurrence edit must not drop an earlier, still-pending alarm.
-  // These retained dates are outside the updated series template's range.
-  for (const row of next) {
-    if (row.seriesId === root.id && row.id !== item.id && !isItemReadOnly(row) &&
-      new Date(row.startAt).getTime() > Date.now() && new Date(row.startAt).getTime() < cutoff) {
-      row.notificationIds = await scheduleItemNotifications({ ...row, repeat: "none", dailySeries: undefined }, false, taskAccount);
-      await persist(next);
-    }
-  }
-  await reconcileDaily(next, true);
-  if (!series.active && item.status !== "Cancelled") {
-    replacement.notificationIds = await scheduleItemNotifications({ ...replacement, dailySeries: undefined }, false, taskAccount);
+  const previousSeries = existing?.dailySeries;
+  const active = item.repeat !== "none" && item.status !== "Cancelled";
+  const replacement: ReminderItem = { ...item, id: existing?.id ?? item.id,
+    seriesId: active ? (existing?.id ?? item.id) : undefined,
+    dailySeries: active ? {
+      masterVersion: 1, active: true, repeat: item.repeat as NonNullable<ReminderItem["dailySeries"]>["repeat"],
+      firstAt: item.startAt, templateId: existing?.id ?? item.id, template: dailyTemplate(item),
+      excludedDates: [], notificationIds: [...(previousSeries?.notificationIds ?? []), ...(existing?.notificationIds ?? [])], dirty: true,
+    } : undefined,
+    notificationIds: [], occurrenceKey: undefined,
+    occurrenceHistory: mergeOccurrenceHistory(existing?.occurrenceHistory, item.occurrenceHistory,
+      existing?.dailySeries && existing.startAt !== item.startAt && localDateKey(existing.startAt) <= localDateKey(new Date())
+        ? [occurrenceResult(existing)] : []),
+  };
+  const next = existing ? items.map(row => row.id === existing.id ? replacement : row) : [...items, replacement];
+  await persist(next);
+  if (active) await reconcileDaily(next, true);
+  else {
+    await cancelNotifications([...(previousSeries?.notificationIds ?? []), ...(existing?.notificationIds ?? [])]);
+    replacement.notificationIds = await scheduleItemNotifications(replacement, false, taskAccount);
     await persist(next);
   }
   return replacement;
@@ -389,9 +396,9 @@ export async function getItemById(
   const items =
     await getItems();
 
-  return items.find(
+  return [...items, ...historyItems(items)].find(
     (item) =>
-      item.id === localId
+      item.id === localId || (Boolean(item.dailySeries) && dailyOccurrenceId(item.id, item.dailySeries!.firstAt, new Date(item.startAt), item.repeat) === localId)
   );
 }
 
@@ -407,12 +414,13 @@ export function getScheduleConflicts(candidate: ReminderItem) {
 export function saveItem(
   item: ReminderItem
 ) {
+  if (item.preview || item.historical) return Promise.reject(new Error("Preview is display-only."));
   return mutate(
     async () => {
       const items =
         await read();
 
-      if (["daily", "weekly", "weekdays"].includes(item.repeat)) {
+      if (["daily", "weekly", "weekdays", "monthly", "yearly"].includes(item.repeat)) {
         const saved = items.find(row => row.id === item.id);
         return saved ?? saveDailyEdit(items, item);
       }
@@ -430,6 +438,7 @@ export function saveItem(
 export function updateItem(
   item: ReminderItem
 ) {
+  if (item.preview || item.historical) return Promise.reject(new Error("Preview is display-only."));
   return mutate(
     async () => {
       const items =
@@ -444,16 +453,14 @@ export function updateItem(
 
       if (
         !existing ||
-        isItemReadOnly(
-          existing
-        )
+        (!existing.dailySeries?.active && isItemReadOnly(existing))
       ) {
         throw new Error(
           "This item is read-only."
         );
       }
 
-      if (existing.seriesId || ["daily", "weekly", "weekdays"].includes(item.repeat)) return saveDailyEdit(items, item, existing);
+      if (existing.seriesId || ["daily", "weekly", "weekdays", "monthly", "yearly"].includes(item.repeat)) return saveDailyEdit(items, item, existing);
 
       if (
         item.status ===
@@ -505,14 +512,8 @@ export function deleteItem(
 
       const root = items.find(row => row.id === item?.seriesId);
       if (item && root?.dailySeries) {
-        root.dailySeries.excludedDates = [...new Set([...root.dailySeries.excludedDates, localDateKey(item.startAt)])];
-        root.dailySeries.dirty = true;
-        if (Platform.OS === "android") await cancelNotifications([`${NATIVE_ALARM_PREFIX}${accountAlarmId(item.id, taskAccount)}`]);
-        await cancelNotifications(item.notificationIds);
-        if (item.id === root.id) root.dailyHidden = true;
-        const next = items.filter(row => row.id !== id || row.id === root.id);
-        await persist(next);
-        await reconcileDaily(next);
+        await cancelNotifications([...root.dailySeries.notificationIds, ...items.filter(row => row.seriesId === root.id).flatMap(row => row.notificationIds)]);
+        await persist(items.filter(row => row.id !== root.id && row.seriesId !== root.id));
         return;
       }
       if (item) {
@@ -533,19 +534,21 @@ export function deleteItem(
 
 export function toggleComplete(
   id: string,
-  completionNote?: string
+  completionNote?: string,
+  expectedStartAt?: string
 ) {
   return mutate(
     async () => {
       const items =
-        await read();
+        await reconcileDaily(await read());
 
       const item =
         items.find(
           (current) =>
-            current.id === id
+            current.id === id || (Boolean(current.dailySeries) && dailyOccurrenceId(current.id, current.dailySeries!.firstAt, new Date(current.startAt), current.repeat) === localAlarmItemId(id))
         );
 
+      if (item?.dailySeries && expectedStartAt && item.startAt !== expectedStartAt) throw new Error("This occurrence has changed. Reopen the current item.");
       const status =
         item
           ? getItemStatus(
@@ -554,7 +557,7 @@ export function toggleComplete(
           : undefined;
 
       if (
-        !item ||
+        !item || item.preview || (item.dailySeries?.active && localDateKey(item.startAt) !== localDateKey(new Date())) ||
         !status ||
         ![
           "Pending",
@@ -611,7 +614,7 @@ export function toggleComplete(
             new Date().toISOString(),
         };
 
-      const updated = items.map(current => current.id === id ? next : current);
+      const updated = items.map(current => current.id === item.id ? next : current);
       const root = updated.find(row => row.id === item.seriesId);
       if (root?.dailySeries?.active) {
         root.dailySeries.excludedDates = [...new Set([
@@ -619,6 +622,7 @@ export function toggleComplete(
         ])];
         root.dailySeries.dirty = true;
       }
+      if (next.dailySeries) next.occurrenceHistory = mergeOccurrenceHistory(next.occurrenceHistory, [occurrenceResult(next)]);
       await persist(updated);
       if (root) await reconcileDaily(updated);
 
@@ -692,6 +696,7 @@ export function resolveItemAction(
 export function rescheduleItem(
   item: ReminderItem
 ) {
+  if (item.preview || item.historical) return Promise.reject(new Error("This occurrence is read-only."));
   return mutate(
     async () => {
       const items =
@@ -712,9 +717,7 @@ export function rescheduleItem(
         ].includes(
           existing.type
         ) ||
-        isItemReadOnly(
-          existing
-        )
+        (!existing.dailySeries?.active && isItemReadOnly(existing))
       ) {
         throw new Error(
           "This item cannot be rescheduled."
@@ -737,7 +740,7 @@ export function rescheduleItem(
         );
       }
 
-      if (existing.seriesId || ["daily", "weekly", "weekdays"].includes(item.repeat)) return saveDailyEdit(items, {
+      if (existing.seriesId || ["daily", "weekly", "weekdays", "monthly", "yearly"].includes(item.repeat)) return saveDailyEdit(items, {
         ...item, completed: false, actionResolved: false, status: undefined,
         completionNote: undefined, completedAt: undefined,
       }, existing);

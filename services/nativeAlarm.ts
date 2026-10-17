@@ -39,7 +39,7 @@ export async function scheduleNativeAlarm(item: ReminderItem, settings: { vibrat
   if (!(await nativeAlarm().nativePreAlertsVersion?.())) {
     throw new Error('Native pre-alerts require the new Android build. Rebuild and reopen Notiva.');
   }
-  const daily = ['daily', 'weekly', 'weekdays'].includes(item.repeat) && item.seriesId && item.dailySeries;
+  const daily = ['daily', 'weekly', 'weekdays', 'monthly', 'yearly'].includes(item.repeat) && item.seriesId && item.dailySeries;
   if (daily && item.repeat === 'weekdays' && !(await nativeAlarm().weekdaysOccurrencesVersion?.())) {
     throw new Error('Weekdays occurrences require the new Android build. Rebuild and reopen Notiva.');
   }

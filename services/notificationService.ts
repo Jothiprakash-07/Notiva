@@ -1245,7 +1245,7 @@ async function scheduleRecurringNotifications(
 ): Promise<string[]> {
   // Durable Android Daily/Weekly/Weekdays series own their dated main/pre-alert pair.
   // Other repeat modes keep the existing Expo/native scheduling path.
-  if (Platform.OS === "android" && ["daily", "weekly", "weekdays"].includes(item.repeat) && item.dailySeries) {
+  if (Platform.OS === "android" && ["daily", "weekly", "weekdays", "monthly", "yearly"].includes(item.repeat) && item.dailySeries) {
     ids.push(await scheduleNativeAlarm(item, await getNotificationSettings(), []));
     return ids;
   }
@@ -1411,6 +1411,7 @@ async function scheduleRecurringNotifications(
 const schedulingItems = new Map<string, Promise<string[]>>();
 
 export function scheduleItemNotifications(item: ReminderItem, requireSuccess = false, account = getItemAccount()): Promise<string[]> {
+  if (item.preview || item.historical) return Promise.resolve([]);
   if (account) item = { ...item, id: accountAlarmId(item.id, account),
     seriesId: item.seriesId ? accountAlarmId(item.seriesId, account) : undefined,
     dailySeries: item.dailySeries ? { ...item.dailySeries, templateId: accountAlarmId(item.dailySeries.templateId, account) } : undefined };

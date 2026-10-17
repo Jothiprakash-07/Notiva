@@ -26,8 +26,8 @@ async function run() {
     assert.equal((await h.storage().getItems()).some(item => item.id === id), false);
     assert.ok(!h.calls.some(call => call.method === 'PATCH' && call.body?.dailyHidden));
     if (repeat !== 'none') {
-      assert.ok(state.items.find(item => item.id === id).dailySeries, 'retained local series anchor');
-      assert.ok(h.alarms.size, 'future recurring schedule remains local');
+      assert.equal(state.items.some(item => item.id === id), false, 'series removed');
+      assert.equal(h.alarms.size, 0, 'future recurring schedule cancelled');
     }
     console.log(`PASS ${repeat}: offline delete intent, duplicate guard, restart, reconnect DELETE, Mongo-style soft delete, stale merge protection`);
   }

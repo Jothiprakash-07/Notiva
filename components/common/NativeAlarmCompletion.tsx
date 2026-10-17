@@ -56,7 +56,7 @@ export default function NativeAlarmCompletion() {
       if (!pending) return;
       saving.current = true;
       try {
-        await toggleComplete(pending.item.id, note);
+        await toggleComplete(pending.item.id, note, pending.item.startAt);
         await close();
         // The screen behind this global modal may have loaded before completion.
         // Reuse notification routing to reload storage and show the saved item.

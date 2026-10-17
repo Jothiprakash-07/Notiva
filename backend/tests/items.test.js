@@ -10,6 +10,8 @@ import routes, { itemRequestError } from "../routes/itemRoutes.js";
 import { prepareItemIndexes } from "../services/itemIndexes.js";
 import { leaveOrganization, changePassword } from "../controllers/profileController.js";
 import { resetPassword } from "../controllers/recoveryController.js";
+import { sessionDouble } from './sessionDouble.js';
+import { loginSession, replaceSession } from '../services/sessions.js';
 
 // Isolated repository doubles; real HTTP routing, auth, validators and schema.
 // No production database or account is contacted.
@@ -51,7 +53,10 @@ async function fixture(t) {
     const row = rows.find(row => matches(row, query)); if (!row) return null;
     const next = { ...row, ...update.$set, revision: row.revision + update.$inc.revision, serverUpdatedAt: new Date(++clock) };
     for (const key of Object.keys(update.$unset ?? {})) delete next[key];
-    await new Item(next).validate(); Object.assign(row, next);
+    await new Item(next).validate();
+    // Model the database's conditional write at commit time, including races.
+    if (!matches(row, query)) return null;
+    Object.assign(row, next);
     for (const key of Object.keys(update.$unset ?? {})) delete row[key];
     return structuredClone(row);
   };
@@ -59,10 +64,12 @@ async function fixture(t) {
   app.use(itemRequestError);
   const server = await new Promise(resolve => { const value = app.listen(0, "127.0.0.1", () => resolve(value)); });
   t.after(() => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }));
-  const request = async (method, path = "", body, user = 0) => {
-    const token = user === null ? undefined : jwt.sign({ userId: users[user]._id, tokenVersion: 0 }, process.env.JWT_SECRET);
+  const request = async (method, path = "", body, user = 0, headers = {}, withRevision = true) => {
+    const token = typeof user === 'string' ? user : user === null ? undefined : jwt.sign({ userId: users[user]._id, tokenVersion: 0 }, process.env.JWT_SECRET);
     const res = await fetch(`http://127.0.0.1:${server.address().port}/api/items${path}`, {
-      method, headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      method, headers: { "Content-Type": "application/json",
+        ...((method === "PATCH" || method === "DELETE") && withRevision && body?.expectedRevision === undefined ? { "If-Match": "1" } : {}),
+        ...headers, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     return { code: res.status, body: await res.json() };
@@ -119,7 +126,7 @@ test("update increments revision atomically; delete retains an idempotent tombst
   assert.equal(next.body.item.createdAt, date); assert.equal(next.body.item.updatedAt, "2026-10-08T09:30:00.000Z");
   assert.equal(next.body.item.serverCreatedAt, first.body.item.serverCreatedAt);
   assert.ok(next.body.item.serverUpdatedAt > first.body.item.serverUpdatedAt);
-  assert.equal((await request("DELETE", "/local-123")).code, 200);
+  assert.equal((await request("DELETE", "/local-123", { expectedRevision: 2 })).code, 200);
   assert.ok(rows[0].deletedAt); assert.equal(rows[0].revision, 3); assert.equal(rows.length, 1);
   assert.equal((await request("DELETE", "/local-123")).code, 200); assert.equal(rows[0].revision, 3);
   assert.equal((await request("GET")).body.items.length, 0);
@@ -231,7 +238,113 @@ test("organization leave, password change and password reset retain personal ite
   const leave = response(); await leaveOrganization({ user: { ...account } }, leave);
   assert.equal(leave.code, 200); assert.equal(JSON.stringify(rows), before);
   const change = response(); await changePassword({ user: { ...account }, body: { currentPassword: "old-password", newPassword: "new-password" } }, change);
-  assert.equal(change.code, 200); assert.ok(change.body.token); assert.equal(JSON.stringify(rows), before);
+  assert.equal(change.code, 200); assert.equal(change.body.requiresLogin, true); assert.equal(JSON.stringify(rows), before);
   const reset = response(); await resetPassword({ body: { resetToken: "a".repeat(64), newPassword: "reset-password", confirmPassword: "reset-password" } }, reset);
   assert.equal(reset.code, 200); assert.equal(account.tokenVersion, 2); assert.equal(JSON.stringify(rows), before);
+});
+
+
+test("recurring master updates retain one document and enforce revision guards", async t => {
+  const { request, rows } = await fixture(t);
+  const data = { ...payload(), repeat: "daily", seriesId: "local-123", dailySeries: {
+    masterVersion: 1, active: true, repeat: "daily", firstAt: date, templateId: "local-123",
+    template: { type: "reminder", title: "Local item", description: "Details", startAt: date },
+    excludedDates: [], notificationIds: [], dirty: true,
+  } };
+  assert.equal((await request("POST", "", data)).code, 201);
+  for (let day = 1; day <= 365; day++) {
+    const at = new Date(Date.parse(date) + day * 86400000).toISOString();
+    const res = await request("PATCH", "/local-123", { startAt: at, occurrenceKey: `local-123|${at}` }, 0, { "If-Match": String(day) });
+    assert.equal(res.code, 200); assert.equal(rows.length, 1);
+  }
+  assert.equal((await request("PATCH", "/local-123", { title: "Stale" }, 0, { "If-Match": "1" })).code, 409);
+  assert.equal(rows[0].title, "Local item");
+  assert.equal((await request("PATCH", "/local-123", { occurrenceHistory: Array(367).fill({ occurrenceKey: "x", scheduledAt: date, status: "Done" }) })).code, 400);
+});
+
+test("expectedRevision is mandatory, validated and never persisted as an item field", async t => {
+  const { request, rows } = await fixture(t);
+  await request('POST', '', payload());
+  for (const method of ['PATCH', 'DELETE']) {
+    for (const revision of [undefined, null, 0, -1, 1.5, '1', Number.MAX_SAFE_INTEGER + 1]) {
+      const body = { ...(method === 'PATCH' ? { title: 'Change' } : {}), ...(revision === undefined ? {} : { expectedRevision: revision }) };
+      assert.equal((await request(method, '/local-123', body, 0, {}, false)).code, 400);
+    }
+    assert.equal((await request(method, '/local-123', { title: 'Change', expectedRevision: 1 }, 0, { 'If-Match': '2' })).code, 400);
+  }
+  assert.equal(rows[0].revision, 1); assert.equal(rows[0].deletedAt, null);
+  const saved = await request('PATCH', '/local-123', { title: 'Valid', expectedRevision: 1 });
+  assert.equal(saved.code, 200); assert.equal(saved.body.item.revision, 2);
+  assert.equal(rows[0].expectedRevision, undefined);
+});
+
+test("matching revision 10 updates to 11; stale writes return owner-scoped authoritative conflict", async t => {
+  const { request, rows } = await fixture(t);
+  await request('POST', '', payload()); rows[0].revision = 10;
+  const updated = await request('PATCH', '/local-123', { title: 'New authoritative title', expectedRevision: 10 });
+  assert.equal(updated.code, 200); assert.equal(updated.body.item.revision, 11);
+  for (const method of ['PATCH', 'DELETE']) {
+    const result = await request(method, '/local-123', { title: 'Stale', expectedRevision: 10 });
+    assert.equal(result.code, 409); assert.equal(result.body.code, 'ITEM_REVISION_CONFLICT');
+    assert.equal(result.body.serverItem.title, 'New authoritative title'); assert.equal(result.body.serverItem.revision, 11);
+    for (const key of ['ownerUserId', '_id', '__v']) assert.equal(result.body.serverItem[key], undefined);
+    const other = await request(method, '/local-123', { title: 'Attack', expectedRevision: 10 }, 1);
+    assert.equal(other.code, 404); assert.equal(other.body.serverItem, undefined);
+  }
+  assert.equal(rows[0].revision, 11); assert.equal(rows[0].deletedAt, null);
+  assert.equal((await request('DELETE', '/local-123', { expectedRevision: 11 })).code, 200);
+  assert.equal(rows[0].revision, 12); assert.ok(rows[0].deletedAt);
+  assert.equal((await request('DELETE', '/local-123', { expectedRevision: 11 })).code, 200);
+  assert.equal(rows[0].revision, 12);
+});
+
+test("two racing writes with the same base have exactly one winner", async t => {
+  const { request, rows } = await fixture(t);
+  await request('POST', '', payload());
+  const results = await Promise.all(['One', 'Two'].map(title => request('PATCH', '/local-123', { title, expectedRevision: 1 })));
+  assert.deepEqual(results.map(r => r.code).sort(), [200, 409]);
+  assert.equal(rows[0].revision, 2);
+  assert.equal(results.find(r => r.code === 409).body.serverItem.title, rows[0].title);
+  const mixed = await Promise.all([
+    request('PATCH', '/local-123', { title: 'Update', expectedRevision: 2 }),
+    request('DELETE', '/local-123', { expectedRevision: 2 }),
+  ]);
+  assert.equal(mixed.filter(r => r.code === 200).length, 1);
+  assert.ok([404, 409].includes(mixed.find(r => r.code !== 200).code));
+  assert.equal(rows[0].revision, 3);
+});
+
+test("stale revision 5 cannot delete version 6 or create deletion evidence", async t => {
+  const { request, rows } = await fixture(t);
+  await request('POST', '', payload()); rows[0].revision = 6;
+  const before = structuredClone(rows[0]);
+  const result = await request('DELETE', '/local-123', { expectedRevision: 5 });
+  assert.equal(result.code, 409); assert.equal(result.body.serverItem.revision, 6);
+  assert.deepEqual(rows[0], before); assert.equal((await request('GET')).body.items.length, 1);
+});
+
+test('single-active-session takeover rejects old auth, then rejects stale revision after legitimate re-login', async t => {
+  const { request, rows } = await fixture(t);
+  const sessions = sessionDouble(); t.after(() => sessions.restore());
+  const user = { ...users[0], password: 'test-hash', sessionEnforced: false };
+  User.findById = async id => id === user._id ? { ...user } : null;
+  User.findOneAndUpdate = async (query, change) => {
+    if (query._id !== user._id || query.password !== user.password) return null;
+    Object.assign(user, change.$set); return { ...user };
+  };
+  const device = digit => ({ deviceId: `${digit}`.repeat(8) + '-1111-4111-8111-111111111111', deviceName: `Device ${digit}`, platform: 'android' });
+  const a = await loginSession(user, device(1));
+  await request('POST', '', payload(), a.token); rows[0].revision = 3;
+  const bConflict = await loginSession(user, device(2)); assert.ok(bConflict.conflict);
+  const b = await replaceSession(user, bConflict.transferToken, device(2).deviceId);
+  assert.equal((await request('PATCH', '/local-123', { title: 'Revoked', expectedRevision: 3 }, a.token)).code, 401);
+  const saved = await request('PATCH', '/local-123', { title: 'Device B revision 4', expectedRevision: 3 }, b.token);
+  assert.equal(saved.code, 200); assert.equal(saved.body.item.revision, 4);
+  const aConflict = await loginSession(user, device(1)); assert.ok(aConflict.conflict);
+  const resumed = await replaceSession(user, aConflict.transferToken, device(1).deviceId);
+  assert.equal((await request('GET', '/local-123', undefined, b.token)).code, 401);
+  const stale = await request('PATCH', '/local-123', { title: 'Preserved offline A edit', expectedRevision: 3 }, resumed.token);
+  assert.equal(stale.code, 409); assert.equal(stale.body.code, 'ITEM_REVISION_CONFLICT');
+  assert.equal(stale.body.serverItem.title, 'Device B revision 4'); assert.equal(rows[0].revision, 4);
+  assert.equal(sessions.rows.length, 1);
 });

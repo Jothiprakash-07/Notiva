@@ -20,13 +20,19 @@ const templateFields = {
   weeklyDays: array(value => Number.isInteger(value) && value >= 0 && value <= 6),
 };
 export const itemFields = {
+  occurrenceKey: id,
+  occurrenceHistory: value => Array.isArray(value) && value.length <= 366 && value.every(shape({
+    occurrenceKey: id, scheduledAt: date, status: choice(["Pending", "Done", "Missed", "Overdue", "Upcoming", "Ongoing", "Completed", "Cancelled"]),
+    completedAt: date, completionNote: string, actionResolved: boolean,
+  }, ["occurrenceKey", "scheduledAt", "status"])),
   ...templateFields, seriesId: id, completedAt: date, dailyHidden: boolean,
   repeat: choice(["none", "daily", "weekly", "weekdays", "monthly", "yearly"]),
   completionNote: string,
   status: choice(["Pending", "Done", "Missed", "Overdue", "Upcoming", "Ongoing", "Completed", "Cancelled"]),
   completed: boolean, actionResolved: boolean, notificationIds: array(string), createdAt: date, updatedAt: date,
   dailySeries: shape({
-    repeat: choice(["daily", "weekly", "weekdays"]), active: boolean, firstAt: date, templateId: id,
+    masterVersion: value => value === 1,
+    repeat: choice(["daily", "weekly", "weekdays", "monthly", "yearly"]), active: boolean, firstAt: date, templateId: id,
     template: shape(templateFields, ["type", "title", "description", "startAt"]),
     excludedDates: array(value => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)),
     notificationIds: array(string), dirty: boolean,

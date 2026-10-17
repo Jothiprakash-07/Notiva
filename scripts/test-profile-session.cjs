@@ -21,6 +21,9 @@ const code = ts.transpileModule(fs.readFileSync(path.join(__dirname, '../context
 }).outputText;
 vm.runInNewContext(code, { module: moduleContext, exports: moduleContext.exports, require: id => {
   if (id === 'react' || id === 'react/jsx-runtime') return require(id);
+  if (id === 'react-native') return { AppState: { addEventListener: () => ({ remove() {} }) } };
+  if (id.endsWith('apiConfig')) return { API_BASE_URL: 'https://notiva.test' };
+  if (id.endsWith('sessionTransport')) return { bindSessionTransport: () => () => {}, authenticatedFetch: async () => ({}), revokeRemoteSession: async () => {} };
   if (id.endsWith('itemAccount')) return { selectItemAccount() {} };
   if (id.endsWith('authStorage')) return {
     readAuthSession: async () => { const snapshot = stored; if (readGate) await readGate; return snapshot; },
@@ -125,5 +128,12 @@ const root = createRoot(document.getElementById('root'));
   await act(async () => root.render(React.createElement(AuthProvider, { key: 'restart' }, React.createElement(Consumer))));
   assert.equal(auth.session, null);
   console.log('PASS stale startup read ignored after logout; fresh startup stays logged out');
+  await act(async () => auth.signIn({ ...original, sessionId: 'bound-session', refreshToken: 'old-refresh' }));
+  await act(async () => auth.replaceSession(original.token, { ...original, token: 'renewed', sessionId: 'bound-session', refreshToken: 'rotated' }));
+  await act(async () => auth.updateUser(original.token, { ...original.user, fullName: 'Saved during renewal' }));
+  assert.equal(auth.session.user.fullName, 'Saved during renewal'); assert.equal(stored.refreshToken, 'rotated');
+  await act(async () => auth.signOut('different-session')); assert.ok(auth.session);
+  await act(async () => auth.signOut('bound-session')); assert.equal(auth.session, null);
+  console.log('PASS in-flight profile saves survive same-session renewal; targeted sign-out cannot clear another session');
   await act(async () => root.unmount());
 })().catch(error => { console.error(error); process.exitCode = 1; });

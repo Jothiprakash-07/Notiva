@@ -1,4 +1,5 @@
 import { ReminderItem } from "../types/item";
+import { localDateKey } from "./dailyRecurrence";
 import { getItemStatus } from "./itemStatus";
 
 export function isActionResolved(
@@ -11,7 +12,7 @@ export function isActionRequired(
   item: ReminderItem,
   now = new Date()
 ): boolean {
-  if (isActionResolved(item)) {
+  if (item.preview || item.historical || (item.dailySeries?.active && localDateKey(item.startAt) !== localDateKey(now)) || isActionResolved(item)) {
     return false;
   }
 

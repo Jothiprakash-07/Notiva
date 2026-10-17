@@ -1,3 +1,4 @@
+import { authenticatedFetch } from "./sessionTransport";
 import { API_BASE_URL } from "./apiConfig";
 import type { AuthUser } from "../types/auth";
 
@@ -14,8 +15,8 @@ export async function recoveryRequest(path: string, body: object = {}, token?: s
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15000);
   try {
-    const response = await fetch(`${API_BASE_URL}/api/auth/${path}`, { method: "POST", signal: controller.signal,
-      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body) });
+    const response = await authenticatedFetch(`${API_BASE_URL}/api/auth/${path}`, { method: "POST", signal: controller.signal,
+      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body) }, token);
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
       const message = response.status === 401 ? "Your session has expired. Please sign in again."

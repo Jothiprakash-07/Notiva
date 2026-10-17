@@ -1,15 +1,17 @@
 import { Platform } from "react-native";
-import type { ReminderItem } from "../types/item";
+import type { ReminderItem, ItemConflict } from "../types/item";
 
 export type SyncOperation = {
   operationId: string; clientItemId: string; type: "create" | "update" | "delete";
   queuedAt: string; attemptCount: number; attempted?: boolean; error?: string; retryAt?: number;
   payload?: Record<string, unknown>;
+  expectedRevision?: number;
+  conflict?: ItemConflict;
 };
 export type ServerItemDeletion = { clientItemId: string; deletedAt: string; revision?: number };
 export type ItemSyncState = { version: 1; items: ReminderItem[]; queue: SyncOperation[];
   deletionCursor?: string; pendingDeletionCancellations?: string[];
-  tombstones: Record<string, { deletedAt: string; synced: boolean; syncStatus?: "pending_delete" | "synced" }> };
+  tombstones: Record<string, { deletedAt: string; synced: boolean; syncStatus?: "pending_delete" | "synced" | "conflict"; conflict?: ItemConflict }> };
 const blank = (): ItemSyncState => ({ version: 1, items: [], queue: [], tombstones: {} });
 let writes: Promise<unknown> = Promise.resolve();
 let sequence = 0;
@@ -66,8 +68,9 @@ export function transactItemState<T>(userId: string, action: (state: ItemSyncSta
 export function readItemSyncState(userId: string) {
   return writes.then(() => load(userId));
 }
-const fields = ["seriesId", "dailySeries", "completedAt", "dailyHidden", "type", "title", "description", "category", "repeat", "weeklyDays", "priority", "startAt", "endAt", "allDay", "location", "notes", "completionNote", "alertBefore", "status", "completed", "actionResolved", "createdAt", "updatedAt"];
+const fields = ["occurrenceKey", "occurrenceHistory", "seriesId", "dailySeries", "completedAt", "dailyHidden", "type", "title", "description", "category", "repeat", "weeklyDays", "priority", "startAt", "endAt", "allDay", "location", "notes", "completionNote", "alertBefore", "status", "completed", "actionResolved", "createdAt", "updatedAt"];
 export function itemPayload(item: ReminderItem): Record<string, unknown> {
+  if (item.preview || item.historical) throw new Error("Preview cannot enter sync.");
   const value: Record<string, unknown> = { clientItemId: item.id, notificationIds: [] };
   for (const key of fields) {
     const field = item[key as keyof ReminderItem]; if (field !== undefined) value[key] = field;
@@ -81,7 +84,7 @@ function operation(id: string, type: SyncOperation["type"], payload?: Record<str
 function queueDeletion(state: ItemSyncState, item: ReminderItem, retainedAnchor = false) {
   if (Object.hasOwn(state.tombstones, item.id)) {
     const tombstone = state.tombstones[item.id];
-    tombstone.syncStatus = tombstone.synced ? "synced" : "pending_delete";
+    tombstone.syncStatus = tombstone.conflict ? "conflict" : tombstone.synced ? "synced" : "pending_delete";
     return;
   }
   const pending = state.queue.find(row => row.clientItemId === item.id);
@@ -91,7 +94,12 @@ function queueDeletion(state: ItemSyncState, item: ReminderItem, retainedAnchor 
   Object.defineProperty(state.tombstones, item.id, { value: {
     deletedAt: new Date().toISOString(), synced: Boolean(neverSent), syncStatus: neverSent ? "synced" : "pending_delete",
   }, enumerable: true, configurable: true, writable: true });
-  if (!neverSent) state.queue.push(operation(item.id, "delete"));
+  if (!neverSent) {
+    const next = operation(item.id, "delete", itemPayload(item));
+    next.expectedRevision = pending?.expectedRevision ?? item.serverRevision;
+    if (pending?.conflict) { next.conflict = pending.conflict; next.error = "conflict"; state.tombstones[item.id].conflict = pending.conflict; state.tombstones[item.id].syncStatus = "conflict"; }
+    state.queue.push(next);
+  }
 }
 export async function commitLocalItems(userId: string, items: ReminderItem[]) {
   let changed = false;
@@ -102,13 +110,15 @@ export async function commitLocalItems(userId: string, items: ReminderItem[]) {
       // clear its tombstone or queue an accidental restore.
       if (Object.hasOwn(state.tombstones, item.id) && !(item.dailyHidden && item.dailySeries)) continue;
       const old = previous.get(item.id), payload = itemPayload(item);
+      const editRevision = item.serverRevision ?? old?.serverRevision;
       if (old?.serverRevision) { item.serverRevision = old.serverRevision; item.serverUpdatedAt = old.serverUpdatedAt; item.lastSyncedAt = old.lastSyncedAt; }
       // Deleting the original recurring occurrence retains its local template
       // for future dates. Its cloud identity must nevertheless be deleted.
       if (item.dailyHidden && item.dailySeries) {
         if (!Object.hasOwn(state.tombstones, item.id)) changed = true;
         queueDeletion(state, item, true);
-        item.syncStatus = state.tombstones[item.id].synced ? "synced" : "pending_delete";
+        item.syncStatus = state.tombstones[item.id].syncStatus;
+        item.conflict = state.tombstones[item.id].conflict;
         continue;
       }
       const pending = state.queue.find(row => row.clientItemId === item.id);
@@ -117,12 +127,17 @@ export async function commitLocalItems(userId: string, items: ReminderItem[]) {
         changed = true;
         const type = pending?.type === "create" || (!old?.serverRevision && !item.serverRevision) ? "create" : "update";
         const next = operation(item.id, type, payload);
+        next.expectedRevision = pending?.expectedRevision ?? editRevision;
+        // Further local edits never resolve or silently rebase a conflict.
+        if (pending?.conflict) { next.conflict = pending.conflict; next.error = "conflict"; }
         if (pending?.attempted) next.attempted = true;
         state.queue = state.queue.filter(row => row.clientItemId !== item.id); state.queue.push(next);
-        item.syncStatus = type === "create" ? "pending_create" : "pending_update";
+        item.syncStatus = next.conflict ? "conflict" : type === "create" ? "pending_create" : "pending_update";
+        item.conflict = next.conflict;
       } else {
         item.syncStatus = old.syncStatus; item.serverRevision = old.serverRevision; item.lastSyncedAt = old.lastSyncedAt;
         item.serverUpdatedAt = old.serverUpdatedAt;
+        item.conflict = old.conflict;
       }
       delete state.tombstones[item.id];
     }
@@ -143,7 +158,10 @@ export async function acknowledgeItem(userId: string, op: SyncOperation, revisio
     if (item && revision) { item.serverRevision = revision; item.serverUpdatedAt = serverUpdatedAt; }
     if (pending?.operationId !== op.operationId) {
       // An edit/delete made during POST must survive the earlier response.
-      if (pending?.type === "create" && revision) { pending.type = "update"; if (item) item.syncStatus = "pending_update"; }
+      if (pending && revision && !pending.conflict && (op.type === "create" || pending.expectedRevision === op.expectedRevision)) {
+        pending.expectedRevision = revision;
+        if (pending.type === "create") { pending.type = "update"; if (item) item.syncStatus = "pending_update"; }
+      }
       return;
     }
     state.queue = state.queue.filter(row => row.operationId !== op.operationId);

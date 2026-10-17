@@ -153,6 +153,7 @@ function RootNavigation() {
           <Stack.Screen name="screens/create/[type]" />
           <Stack.Screen name="screens/profile/AppSettingsScreen" />
           <Stack.Screen name="screens/profile/ChangePasswordScreen" />
+          <Stack.Screen name="screens/profile/SessionsScreen" />
           <Stack.Screen name="screens/profile/EditProfileScreen" />
           <Stack.Screen name="screens/profile/JoinOrganizationScreen" />
           <Stack.Screen name="screens/profile/NotificationSettingsScreen" />

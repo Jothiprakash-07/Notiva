@@ -9,6 +9,8 @@ import { prepareItemIndexes, prepareDeletedItemIndexes } from "./services/itemIn
 import { startCleanupScheduler } from "./services/cleanupScheduler.js";
 import { prepareIdentityIndexes } from "./services/identityMigration.js";
 
+import { prepareSessionIndexes } from "./services/sessions.js";
+
 dotenv.config();
 
 const app = express();
@@ -38,6 +40,7 @@ mongoose
   .connect(process.env.MONGO_URI)
   .then(async () => {
     await prepareIdentityIndexes();
+    await prepareSessionIndexes();
     await prepareItemIndexes();
     await prepareDeletedItemIndexes();
     startCleanupScheduler();

@@ -145,10 +145,10 @@ object AlarmStore {
         else -> true
       }
       val excluded = data.optJSONArray("excludedDates")
-      val skipped = (repeat == "daily" || repeat == "weekly" || repeat == "weekdays") && excluded != null && (0 until excluded.length()).any { excluded.optString(it) == dayKey(candidate.timeInMillis) }
+      val skipped = data.has("seriesId") && excluded != null && (0 until excluded.length()).any { excluded.optString(it) == dayKey(candidate.timeInMillis) }
       if (matches && !skipped && candidate.timeInMillis >= start && candidate.timeInMillis > after) return candidate.timeInMillis
       candidate.add(Calendar.DAY_OF_YEAR, 1)
-      if ((repeat == "daily" || repeat == "weekly" || repeat == "weekdays") && data.has("seriesId")) {
+      if (data.has("seriesId")) {
         candidate.set(Calendar.HOUR_OF_DAY, anchor.get(Calendar.HOUR_OF_DAY))
         candidate.set(Calendar.MINUTE, anchor.get(Calendar.MINUTE))
       }

@@ -6,7 +6,7 @@ import {
   useLocalSearchParams,
   useFocusEffect,
 } from "expo-router";
-import { useCallback, useState } from "react";
+import { useCallback, useState, useRef } from "react";
 import {
   Alert,
   Pressable,
@@ -20,6 +20,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import {
   deleteItem,
   getItemById,
+  subscribeItemRestore,
   toggleComplete,
   updateItem,
 } from "../../../services/itemStorage";
@@ -47,6 +48,7 @@ export default function DetailsScreen() {
   const [, setNow] =
     useState(Date.now());
 
+  const completionOccurrence = useRef<string | undefined>(undefined);
   const [showCompletion, setShowCompletion] = useState(false);
 
   const [busy, setBusy] =
@@ -74,6 +76,7 @@ export default function DetailsScreen() {
           });
 
       void refresh();
+      const stopRestore = subscribeItemRestore(() => { void refresh(); });
 
       const timer = setInterval(
         () => setNow(Date.now()),
@@ -82,6 +85,7 @@ export default function DetailsScreen() {
 
       return () => {
         active = false;
+        stopRestore();
         clearInterval(timer);
       };
     }, [id])
@@ -159,7 +163,7 @@ export default function DetailsScreen() {
       status === "Overdue");
 
   const readOnly =
-    isItemReadOnly(item);
+    Boolean(item.historical) || (!item.dailySeries?.active && isItemReadOnly(item));
 
   const name =
     item.type[0].toUpperCase() +
@@ -212,7 +216,8 @@ export default function DetailsScreen() {
       const next =
         await toggleComplete(
           item.id,
-          note
+          note,
+          completionOccurrence.current ?? item.startAt
         );
 
       if (!next?.completed) throw new Error("Item could not be completed.");
@@ -477,7 +482,7 @@ export default function DetailsScreen() {
                 busy &&
                   styles.buttonDisabled,
               ]}
-              onPress={() => { if (!busy && !readOnly) setShowCompletion(true); }}
+              onPress={() => { if (!busy && !readOnly) { completionOccurrence.current = item.startAt; setShowCompletion(true); } }}
             >
               <Ionicons
                 name="checkmark-circle-outline"
@@ -594,7 +599,7 @@ export default function DetailsScreen() {
               busy &&
                 styles.buttonDisabled,
             ]}
-            onPress={remove}
+            onPress={item.historical ? undefined : remove}
           >
             <Ionicons
               name="trash-outline"
@@ -607,7 +612,7 @@ export default function DetailsScreen() {
                 styles.dangerText
               }
             >
-              Delete {name}
+              {item.historical ? "History (read-only)" : `Delete ${name}`}
             </Text>
           </Pressable>
         </View>

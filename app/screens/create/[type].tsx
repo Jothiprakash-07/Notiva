@@ -216,7 +216,7 @@ export default function CreateItemScreen() {
       .then((item) => {
         if (
           !item ||
-          isItemReadOnly(item)
+          (!item.dailySeries?.active && isItemReadOnly(item))
         ) {
           setLocked(true);
           setLoading(false);
@@ -405,9 +405,7 @@ export default function CreateItemScreen() {
       if (
         params.id &&
         (!existing ||
-          isItemReadOnly(
-            existing
-          ))
+          (!existing.dailySeries?.active && isItemReadOnly(existing)))
       ) {
         setLocked(true);
         return;
@@ -508,7 +506,7 @@ export default function CreateItemScreen() {
         return;
       }
 
-      if (["daily", "weekly", "weekdays"].includes(item.repeat) || existing?.seriesId) {
+      if (["daily", "weekly", "weekdays", "monthly", "yearly"].includes(item.repeat) || existing?.seriesId) {
         if (existing) await updateItem(item);
         else await saveItem(item);
         router.replace("/(tabs)");

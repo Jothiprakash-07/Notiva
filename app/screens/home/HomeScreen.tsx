@@ -1,3 +1,4 @@
+import { itemsForDate, visibleCurrentItems } from "../../../utils/dailyRecurrence";
 import CompletionNoteModal from "../../../components/common/CompletionNoteModal";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import {
@@ -649,7 +650,7 @@ export default function HomeScreen() {
         new Date();
 
       return sortItemsByStatus(
-        items.filter(
+        (dateFilter === "Tomorrow" ? itemsForDate(items, new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1), now) : visibleCurrentItems(items, now)).filter(
           (
             reminder
           ) => {
@@ -710,7 +711,7 @@ export default function HomeScreen() {
     useMemo(
       () =>
         sortItemsByStatus(
-          items.filter(
+          visibleCurrentItems(items).filter(
             (
               item
             ) =>
@@ -725,22 +726,24 @@ export default function HomeScreen() {
     );
 
   const totalCount =
-    items.length;
+    visibleCurrentItems(items).length;
 
   const doneCount =
-    items.filter(
+    visibleCurrentItems(items).filter(
       isCountedAsDone
     ).length;
 
   const overdueCount =
-    items.filter(
+    visibleCurrentItems(items).filter(
       isCountedAsOverdue
     ).length;
 
+  const completionOccurrence = useRef<string | undefined>(undefined);
   const [completionItemId, setCompletionItemId] = useState<string | null>(null);
   const [completionSaving, setCompletionSaving] = useState(false);
 
   const handleToggle = (id: string) => {
+    completionOccurrence.current = items.find(item => item.id === id)?.startAt;
     const selected = items.find(item => item.id === id);
     if (selected && !selected.completed && selected.status !== "Done") setCompletionItemId(id);
   };
@@ -749,7 +752,7 @@ export default function HomeScreen() {
     if (!completionItemId || completionSaving) return;
     setCompletionSaving(true);
     try {
-      const updated = await toggleComplete(completionItemId, note);
+      const updated = await toggleComplete(completionItemId, note, completionOccurrence.current);
       if (!updated?.completed) throw new Error("Item could not be completed.");
       const stored = await getItems();
       setItems(stored.map(item => withCalculatedStatus(item)));
@@ -1255,6 +1258,7 @@ export default function HomeScreen() {
                         }
                       >
                         <ReminderCard
+                          preview={reminder.preview}
                           id={
                             reminder.id
                           }

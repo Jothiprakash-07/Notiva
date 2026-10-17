@@ -36,7 +36,7 @@ const native = {
 const source = fs.readFileSync(path.join(__dirname, '../app/screens/login/LoginScreen.tsx'), 'utf8');
 const moduleContext = { exports: {} };
 vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2020 } }).outputText, {
-  module: moduleContext, exports: moduleContext.exports, Error, TypeError, SyntaxError,
+  module: moduleContext, exports: moduleContext.exports, Error, TypeError, SyntaxError, AbortController, setTimeout, clearTimeout,
   fetch: async (...args) => { calls.push(args); return request(...args); },
   require: name => {
     if (name === 'react' || name === 'react/jsx-runtime') return require(name);
@@ -44,6 +44,7 @@ vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.Mo
     if (name === 'react-native-safe-area-context') return { SafeAreaView: native.SafeAreaView };
     if (name === '@expo/vector-icons/Ionicons') return { default: () => null };
     if (name === 'expo-router') return { Redirect: ({ href }) => { React.useEffect(() => { routes.push(href); }, [href]); return null; }, router: { replace: route => routes.push(route), push: route => routes.push(route) } };
+    if (name.endsWith('deviceIdentity')) return { getLoginDevice: async () => ({ deviceId: 'test-device' }) };
     if (name.endsWith('apiConfig')) return { API_BASE_URL: 'https://notiva.test' };
     if (name.endsWith('AuthContext')) return { useAuth: () => ({ session: restoredSession, isLoading: authLoading, signIn: async session => { await persist(); sessions.push(session); } }) };
     if (name.endsWith('.png')) return 1;
@@ -52,7 +53,7 @@ vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.Mo
 });
 const Screen = moduleContext.exports.default;
 const result = (data, ok = true, status = ok ? 200 : 500) => ({ ok, status, json: async () => data });
-const session = { token: 'test-token', user: { id: 'id', fullName: 'Test User', organizationCode: 'ORG-123' } };
+const session = { token: 'test-token', sessionId: 'session-id', refreshToken: 'refresh', accessExpiresAt: '2099-01-01', user: { id: 'id', fullName: 'Test User', organizationCode: 'ORG-123' } };
 async function render() {
   calls = []; sessions = []; routes = []; notices = []; registrations = [];
   request = async () => result(session); persist = async () => {};
@@ -107,7 +108,7 @@ async function run() {
   assert.equal(calls[0][0], 'https://notiva.test/api/auth/login');
   assert.equal(calls[0][1].method, 'POST');
   assert.equal(calls[0][1].headers['Content-Type'], 'application/json');
-  assert.deepEqual(JSON.parse(calls[0][1].body), { identifier: 'person@example.com', password: 'secret  ' });
+  assert.deepEqual(JSON.parse(calls[0][1].body), { identifier: 'person@example.com', password: 'secret  ', deviceId: 'test-device' });
   let releasePersistence;
   persist = () => new Promise(resolve => { releasePersistence = resolve; });
   await act(async () => releaseRequest(result(session)));
@@ -144,6 +145,24 @@ async function run() {
   assert.doesNotMatch(source, /<StatusBar\b/, 'global status bar is retained');
   assert.doesNotMatch(source.slice(0, source.indexOf('{/* Register selection modal */}')), /allowFontScaling=\{false\}/);
   console.log('PASS Login: UI, validation, show/hide, focus, placeholders, registration, duplicate/loading guard, Notiva ID and legacy identifier payloads, preserved session/navigation contract, friendly errors and keyboard/status-bar configuration');
+  await render(); await credentials();
+  const conflictBody = { code: 'ACTIVE_SESSION_EXISTS', transferToken: 'one-use-proof', userId: 'id', activeSession: { deviceName: 'Vivo device', lastSeenAt: '2026-01-01T00:00:00Z' } };
+  request = async () => result(conflictBody, false, 409);
+  await click('Log In');
+  assert.ok(document.body.textContent.includes('Account already active'));
+  assert.ok(document.body.textContent.includes('Vivo device'));
+  assert.equal(sessions.length, 0); assert.equal(input('Password').value, '');
+  await click('Cancel'); assert.equal(document.querySelector('article'), null); assert.equal(calls.length, 1);
+  await credentials(); await click('Log In');
+  request = async (url, options) => { assert.ok(url.endsWith('/replace-session'));
+    assert.deepEqual(JSON.parse(options.body), { userId: 'id', transferToken: 'one-use-proof', deviceId: 'test-device' }); return result(session); };
+  await click('Sign out other device & continue');
+  assert.equal(sessions.length, 1); assert.deepEqual(routes, ['/(tabs)']);
+  await render(); await credentials(); request = async () => result(conflictBody, false, 409); await click('Log In');
+  request = async () => result({}, false, 401); await click('Sign out other device & continue');
+  assert.equal(sessions.length, 0); assert.equal(document.querySelector('article'), null);
+  assert.ok(document.body.textContent.includes('request expired'));
+  console.log('PASS conflict metadata, cancellation without takeover, password clearing, proof-only transfer, success and expired challenge');
   restoredSession = session; routes = [];
   await act(async () => root.render(React.createElement(Screen, { key: ++key })));
   assert.deepEqual(routes, ['/(tabs)']); assert.equal(document.querySelector('input'), null);

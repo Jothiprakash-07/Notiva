@@ -1,6 +1,6 @@
 import bcrypt from "bcryptjs";
 import { randomBytes } from "crypto";
-import { createAccessToken } from "../services/accessToken.js";
+import { deviceMetadata, loginSession } from "../services/sessions.js";
 import User from "../models/user.js";
 import Organization from "../models/Organization.js";
 import { normalize, validNotivaId, notivaIdFormat, notivaIdTaken, validEmail, validPassword, validMobile } from "../services/identity.js";
@@ -45,7 +45,7 @@ export const registerUser = async (req, res) => {
     const user = await User.create({ fullName: fullName.trim(), notivaId, recoveryEmail, recoveryEmailVerified: false,
       mobileNumber: mobileNumber.trim(), password: await bcrypt.hash(password, 10),
       organizationCode, department: typeof body.department === "string" ? body.department.trim() : "", role: "user" });
-    return res.status(201).json({ success: true, message: "Account created.", token: createAccessToken(user), user: publicUser(user) });
+    return res.status(201).json({ success: true, message: "Account created successfully", user: publicUser(user) });
   } catch (error) {
     if (isNotivaDuplicate(error)) return res.status(409).json({ message: notivaIdTaken });
     return res.status(503).json({ message: "Unable to create your account right now. Please try again." });
@@ -72,9 +72,14 @@ export const loginUser = async (req, res) => {
     const hash = user?.password || "$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
     if (!(await bcrypt.compare(body.password, hash)) || !user) return invalid();
     user = await reconcileLegacyEmail(user);
-    if (!user) return invalid();
-    const token = createAccessToken(user);
-    return res.json({ success: true, message: "Login successful.", token, user: publicUser(user) });
+    if (!user || user.password !== hash) return invalid();
+    const device = deviceMetadata(body);
+    if (!device) return res.status(400).json({ message: "Update the app and try signing in again." });
+    const result = await loginSession(user, device);
+    if (result.stale) return res.status(409).json({ code: "SESSION_CHANGED", message: "Session changed. Please sign in again." });
+    if (result.conflict) return res.status(409).json({ code: "ACTIVE_SESSION_EXISTS", transferToken: result.transferToken,
+      userId: result.userId, activeSession: result.activeSession });
+    return res.json({ success: true, message: "Login successful.", ...result, user: publicUser(user) });
   } catch {
     return res.status(503).json({ message: "Unable to log in right now. Please try again." });
   }

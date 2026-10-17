@@ -19,6 +19,9 @@ function load(file, imports, globals = {}) {
   }).outputText;
   vm.runInNewContext(code, { module, exports: module.exports, ...globals, require: id => {
     if (id === 'react' || id === 'react/jsx-runtime') return require(id);
+    if (id.endsWith('sessionTransport')) return { authenticatedFetch: (...args) => fetchImpl(...args), bindSessionTransport: () => () => {}, revokeRemoteSession: async () => {} };
+    if (id === 'react-native' && !imports[id]) return { AppState: { addEventListener: () => ({ remove() {} }) } };
+    if (id.endsWith('apiConfig')) return { API_BASE_URL: 'https://notiva.test' };
     if (id.endsWith('itemAccount')) return { selectItemAccount() {} };
     if (Object.hasOwn(imports, id)) return imports[id];
     throw new Error(`Unexpected dependency (including data deletion or logout): ${id}`);

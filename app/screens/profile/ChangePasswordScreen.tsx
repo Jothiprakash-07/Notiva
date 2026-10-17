@@ -1,3 +1,4 @@
+import { router } from "expo-router";
 import { useRef, useState } from "react";
 import { Text, View } from "react-native";
 import { useAuth } from "../../../contexts/AuthContext";
@@ -5,7 +6,7 @@ import { Action, Field, ProfilePage, ui } from "../../../components/profile/Prof
 import { changePassword, ProfileError } from "../../../services/profileService";
 
 export default function ChangePasswordScreen() {
-  const { session, replaceSession } = useAuth();
+  const { session, replaceSession, signOut } = useAuth();
   const [values, setValues] = useState({ currentPassword: "", newPassword: "", confirm: "" });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [message, setMessage] = useState("");
@@ -22,6 +23,7 @@ export default function ChangePasswordScreen() {
     lock.current = true; setBusy(true);
     try {
       const result = await changePassword(session.token, values.currentPassword, values.newPassword);
+      if (result.requiresLogin) { await signOut(session.sessionId); router.replace("/"); return; }
       if (!result.token || result.user?.id !== session.user.id) throw new Error("Password updated, but your session could not be renewed. Sign in with your new password.");
       try {
         if (!(await replaceSession(session.token, { token: result.token, user: result.user }))) return;
@@ -33,9 +35,10 @@ export default function ChangePasswordScreen() {
     } catch (error) { setErrors({ ...(error instanceof ProfileError ? error.errors : {}), form: error instanceof Error ? error.message : "Could not update password." }); }
     finally { lock.current = false; setBusy(false); }
   };
-  return <ProfilePage title="Change Password" subtitle="Keep your account secure">
+  return <ProfilePage title="Password & Security" subtitle="Keep your account secure">
+    <Action label="Devices / Sessions" onPress={() => router.push("/screens/profile/SessionsScreen")} />
     <View style={ui.card}>
-      <Text style={ui.subtitle}>Use at least 6 characters. Your existing session will remain active.</Text>
+      <Text style={ui.subtitle}>Use at least 6 characters. Changing your password signs out your devices. Sign in again with the new password.</Text>
       {([ ["currentPassword", "Current Password"], ["newPassword", "New Password"], ["confirm", "Confirm New Password"] ] as const).map(([key, label]) => <Field key={key} label={label} password value={values[key]} error={errors[key]} editable={!busy} autoCorrect={false} autoComplete={key === "currentPassword" ? "current-password" : "new-password"} onChangeText={value => { setValues(current => ({ ...current, [key]: value })); setErrors(current => ({ ...current, [key]: "", form: "" })); setMessage(""); }} />)}
     </View>
     {errors.form ? <Text accessibilityRole="alert" style={ui.error}>{errors.form}</Text> : null}

@@ -23,6 +23,8 @@ import {
 
 type ReminderCardProps = {
   id: string;
+  preview?: boolean;
+  historical?: boolean;
   priority?: Priority | null;
   title: string;
   time: string;
@@ -74,6 +76,8 @@ function typeLabel(
 }
 
 export default function ReminderCard({
+  preview = false,
+  historical = false,
   priority,
   title,
   time,
@@ -98,7 +102,7 @@ export default function ReminderCard({
   const isDone =
     status === "Done";
 
-  const canToggle =
+  const canToggle = !preview && !historical &&
     (
       type === "reminder" ||
       type === "task"
@@ -119,7 +123,7 @@ export default function ReminderCard({
    */
   const handleLongPress = () => {
     if (
-      disabled ||
+      preview || historical || disabled ||
       selectionMode ||
       !onLongPress
     ) {
@@ -139,7 +143,7 @@ export default function ReminderCard({
    * Normal mode    -> open Details
    */
   const handleCardPress = () => {
-    if (disabled) {
+    if (disabled || preview) {
       return;
     }
 
@@ -382,7 +386,7 @@ export default function ReminderCard({
               ]}
               numberOfLines={1}
             >
-              {status}
+              {preview ? "Preview" : status}
             </Text>
           </View>
         </View>

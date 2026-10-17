@@ -1,3 +1,5 @@
+import { sessionDouble } from "./sessionDouble.js";
+let sessionMock;
 import test, { beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import bcrypt from "bcryptjs";
@@ -32,6 +34,7 @@ function matches(row, query) {
     if (key === "$expr") return expected.$and.every(value => get(row, value.$eq[0].slice(1)) === get(row, value.$eq[1].slice(1)));
     const actual = get(row, key);
     if (expected && typeof expected === "object" && !(expected instanceof Date)) return Object.entries(expected).every(([operator, value]) => {
+      if (operator === "$in") return value.some(v => v === null ? actual == null : actual === v);
       if (operator === "$exists") return (actual !== undefined) === value;
       if (operator === "$lt") return actual < value;
       if (operator === "$lte") return actual <= value;
@@ -52,11 +55,12 @@ function update(query, change) {
 }
 const response = () => ({ code: 200, body: undefined, status(code) { this.code = code; return this; }, json(body) { this.body = body; return this; } });
 async function call(controller, body = {}, user = account, query = {}) {
-  const res = response(); await controller({ body, user: copy(user), query, headers: {} }, res); return res;
+  const res = response(); if (controller === loginUser) body = { deviceId: "11111111-1111-4111-8111-111111111111", platform: "android", ...body }; await controller({ body, user: copy(user), query, headers: {} }, res); return res;
 }
 const lastOtp = () => deliveries.at(-1).text.match(/\b\d{6}\b/)[0];
 const registration = () => ({ fullName: "New User", notivaId: generateNotivaId("New User"), recoveryEmail: " NEW@Example.com ", mobileNumber: "+919876543210", password: "secret123", confirmPassword: "secret123" });
 beforeEach(async () => {
+  sessionMock = sessionDouble();
   process.env.JWT_SECRET = "test-only-recovery-secret";
   account = { _id: "507f1f77bcf86cd799439011", fullName: "Existing Person", email: "legacy@example.com", notivaId: "person_01", recoveryEmail: "recover@example.com", recoveryEmailVerified: false, mobileNumber: "+919876543210", department: "Design", organizationCode: "ORG-ABC123", role: "user", createdAt: new Date("2025-01-01"), password: await bcrypt.hash("old-password", 4) };
   records = [account]; deliveries = [];
@@ -79,6 +83,7 @@ beforeEach(async () => {
   mailer.send = async message => { deliveries.push(message); };
 });
 afterEach(() => {
+  sessionMock.restore();
   Object.assign(User, originals); Object.assign(Organization, orgOriginal); mailer.send = sendOriginal; identityRandom.suffix = suffixOriginal;
   if (secretOriginal === undefined) delete process.env.JWT_SECRET; else process.env.JWT_SECRET = secretOriginal;
 });
@@ -89,11 +94,10 @@ test("format boundaries, separators, reserved names, display case and unique col
   const doc = new User({ ...account, notivaId: "JOTHI-07" }); await doc.validate(); assert.equal(doc.notivaId, "JOTHI-07");
   assert.ok(User.schema.indexes().some(([key, options]) => key.notivaId === 1 && options.unique && options.sparse && options.collation.strength === 2));
 });
-test("registration saves final ID, returns valid access token and hashes password", async () => {
+test("registration saves final ID, creates no session or access token and hashes password", async () => {
   const body = registration(); const res = await call(registerUser, body); assert.equal(res.code, 201);
   assert.equal(res.body.user.notivaId, body.notivaId);
-  assert.equal(jwt.verify(res.body.token, process.env.JWT_SECRET).tokenVersion, 0);
-  let accepted = false; await authenticate({ headers: { authorization: `Bearer ${res.body.token}` } }, response(), () => { accepted = true; }); assert.ok(accepted);
+  assert.equal(res.body.token, undefined); assert.equal(sessionMock.rows.length, 0);
   assert.match(res.body.user.notivaId, /^new-user-[a-f0-9]{6}$/); assert.equal(records[1].notivaId, res.body.user.notivaId);
   assert.equal(res.body.user.recoveryEmail, "new@example.com"); assert.equal(res.body.user.recoveryEmailVerified, false);
   assert.equal(records[1].email, undefined); assert.equal(res.body.user.password, undefined); assert.ok(await bcrypt.compare("secret123", records[1].password));
@@ -157,8 +161,19 @@ test("mixed-case ID and legacy login work; tokens contain current version and er
 test("legacy email login fills only missing recovery email and retains the same account", async () => {
   delete account.notivaId; delete account.recoveryEmail; const before = copy(account);
   assert.equal((await call(loginUser, { email: "LEGACY@example.com", password: "old-password" })).code, 200);
-  assert.deepEqual(account, { ...before, recoveryEmail: before.email, recoveryEmailVerified: false });
+  assert.deepEqual(account, { ...before, recoveryEmail: before.email, recoveryEmailVerified: false, sessionEnforced: true });
 });
+test("legacy reconciliation cannot authenticate a password changed after credential verification", async () => {
+  delete account.recoveryEmail;
+  const priorUpdate = User.findOneAndUpdate;
+  User.findOneAndUpdate = async (query, change) => {
+    if (change.$set?.recoveryEmail) account.password = await bcrypt.hash("changed-password", 4);
+    return priorUpdate(query, change);
+  };
+  const result = await call(loginUser, { email: account.email, password: "old-password" });
+  assert.equal(result.code, 401); assert.equal(sessionMock.rows.length, 0);
+});
+
 test("custom ID and same-user case changes preserve profile and existing JWT", async () => {
   const token = (await call(loginUser, { identifier: account.notivaId, password: "old-password" })).body.token;
   const before = copy(account);
@@ -240,7 +255,7 @@ test("new unverified generated account logs in and resets; old token/password ar
   const registered = await call(registerUser, registration()); assert.equal(registered.code, 201); const created = records[1];
   const old = await call(loginUser, { identifier: created.notivaId.toUpperCase(), password: "secret123" }); assert.equal(old.code, 200);
   const auth = await authorization(created); assert.equal(auth.code, 200); const body = resetBody(auth.body.resetToken);
-  assert.equal((await call(resetPassword, body)).code, 200); assert.equal(created.tokenVersion, 1); assert.ok(await bcrypt.compare(body.newPassword, created.password));
+  assert.equal((await call(resetPassword, body)).code, 200); assert.equal(created.tokenVersion, 1); assert.ok(sessionMock.rows[0].revokedAt); assert.equal(sessionMock.rows[0].refreshHash, ""); assert.ok(await bcrypt.compare(body.newPassword, created.password));
   assert.equal((await call(loginUser, { identifier: created.notivaId, password: "secret123" })).code, 401);
   const res = response(); await authenticate({ headers: { authorization: `Bearer ${old.body.token}` } }, res, () => assert.fail("old token")); assert.equal(res.code, 401);
   const fresh = await call(loginUser, { identifier: created.notivaId, password: body.newPassword }); assert.equal(fresh.code, 200);

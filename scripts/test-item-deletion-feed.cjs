@@ -81,9 +81,9 @@ async function run() {
     await series.sync().syncItems();
     const snapshot = await series.queue().readItemSyncState('A');
     const root = snapshot.items.find(row => row.id === `root-${repeat}`);
-    assert.ok(root.dailyHidden); assert.ok(root.dailySeries.active); assert.ok(root.dailySeries.excludedDates.length);
-    assert.ok(series.alarms.size); assert.equal(snapshot.queue.some(op => op.clientItemId === root.id), false);
-    check(`${repeat} remote occurrence delete retains future series and excludes deleted occurrence`);
+    assert.equal(root, undefined);
+    assert.equal(series.alarms.size, 0); assert.equal(snapshot.queue.some(op => op.clientItemId === `root-${repeat}`), false);
+    check(`${repeat} remote series delete removes master and cancels future alarms`);
   }
   console.log(`Deletion feed checks passed: ${checks}`);
 }

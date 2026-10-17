@@ -1,10 +1,12 @@
 /* global __dirname */
 const assert = require('node:assert/strict');
-const { harness, makeItem } = require('./test-native-alarms.cjs');
+const { harness, makeItem: baseMakeItem } = require('./test-native-alarms.cjs');
 const wait = () => new Promise(resolve => setImmediate(resolve));
 const clone = value => JSON.parse(JSON.stringify(value));
-function fixture(os = 'android') {
+function fixture(os = 'android', Clock = Date) {
   const rows = new Map(), archives = new Map(), calls = [], appListeners = [], networkListeners = [];
+  const owners = new Map();
+  let activeToken;
   let online = false, gate, failStatus, failMethod, state = 'active';
   const network = {
     getNetworkStateAsync: async () => ({ isConnected: online, isInternetReachable: online }),
@@ -14,14 +16,15 @@ function fixture(os = 'android') {
     calls.push({ url, method: init.method, body: init.body && JSON.parse(init.body), account: init.headers.Authorization });
     if (gate) await gate;
     if (!online) throw Error('offline');
+    if (activeToken && init.headers.Authorization !== `Bearer ${activeToken}`) return { ok: false, status: 401, json: async () => ({ code: 'SESSION_REVOKED' }) };
     if (failStatus && (!failMethod || init.method === failMethod)) return { ok: false, status: failStatus };
     const parsed = new URL(url);
-    const owner = init.headers.Authorization, id = decodeURIComponent(parsed.pathname.split('/api/items')[1].slice(1));
+    const owner = `Bearer ${owners.get(init.headers.Authorization.slice(7)) ?? init.headers.Authorization.slice(7)}`, id = decodeURIComponent(parsed.pathname.split('/api/items')[1].slice(1));
     const key = `${owner}:${id}`, body = init.body && JSON.parse(init.body);
     const res = (status, value) => ({ ok: status < 400, status, json: async () => clone(value) });
     if (init.method === 'POST') {
       const k = `${owner}:${body.clientItemId}`; if (rows.has(k)) return res(409, {});
-      const item = { ...body, revision: 1, serverUpdatedAt: new Date().toISOString() }; rows.set(k, item); return res(201, { item });
+      const item = { ...body, revision: 1, serverUpdatedAt: new Clock().toISOString() }; rows.set(k, item); return res(201, { item });
     }
     if (init.method === 'GET') {
       if (id === 'deletions') {
@@ -37,26 +40,49 @@ function fixture(os = 'android') {
       if (!id) return res(200, { items: [...rows.entries()].filter(([k, v]) => k.startsWith(`${owner}:`) && !v.deletedAt).map(([, v]) => v) });
       return rows.has(key) && !rows.get(key).deletedAt ? res(200, { item: rows.get(key) }) : res(404, {});
     }
-    if (!rows.has(key) || rows.get(key).deletedAt) return res(404, {});
+    if (!rows.has(key)) return res(404, {});
     const item = rows.get(key);
-    if (init.method === 'DELETE') { item.deletedAt = new Date().toISOString(); item.revision++; return res(200, { success: true }); }
-    Object.assign(item, body); for (const field of Object.keys(body)) if (body[field] === null && !['category', 'priority', 'alertBefore'].includes(field)) delete item[field];
-    item.revision++; item.serverUpdatedAt = new Date().toISOString(); return res(200, { item });
+    if (item.deletedAt) return init.method === 'DELETE' ? res(200, { success: true, item }) : res(404, {});
+    if (!Number.isSafeInteger(body?.expectedRevision) || body.expectedRevision < 1) return res(400, {});
+    if (item.revision !== body.expectedRevision) return res(409, { code: 'ITEM_REVISION_CONFLICT', serverItem: item });
+    if (init.method === 'DELETE') { item.deletedAt = new Clock().toISOString(); item.revision++; return res(200, { success: true, item }); }
+    const { expectedRevision, ...changes } = body;
+    Object.assign(item, changes); for (const field of Object.keys(changes)) if (changes[field] === null && !['category', 'priority', 'alertBefore'].includes(field)) delete item[field];
+    item.revision++; item.serverUpdatedAt = new Clock().toISOString(); return res(200, { item });
   };
   const web = new Map();
-  const h = harness(os, Date, { sync: true, fetch, mocks: { 'expo-network': network }, localStorage: { getItem: key => web.get(key) ?? null, setItem: (key, value) => web.set(key, value) } });
+  const h = harness(os, Clock, { sync: true, fetch, mocks: { 'expo-network': network }, localStorage: { getItem: key => web.get(key) ?? null, setItem: (key, value) => web.set(key, value) } });
+  h.setNextTrigger(() => Clock.now() + 100000);
   // Augment the harness's existing React Native mock without changing alarm APIs.
   // Runtime loader obtains this same object through a tiny test module below.
   const account = () => h.load('services/itemAccount.ts');
-  const select = user => account().selectItemAccount(user ? { token: user, user: { id: user } } : null);
+  const select = (user, token = user) => { if (user) owners.set(token, user); account().selectItemAccount(user ? { token, user: { id: user } } : null); };
   select('A');
   return { ...h, web, rows, archives, calls, select, account, networkListeners, appListeners,
+    authorize(token) { activeToken = token; },
     storage: () => h.load('services/itemStorage.ts'), queue: () => h.load('services/itemSyncQueue.ts'), sync: () => h.load('services/itemSyncService.ts'),
     online(value) { online = value; networkListeners.forEach(fn => fn({ isConnected: value, isInternetReachable: value })); },
     gate(value) { gate = value; }, fail(value, method) { failStatus = value; failMethod = method; }, state(value) { state = value; appListeners.forEach(fn => fn(value)); },
   };
 }
-async function run() {
+// Numeric local components deliberately follow the product's local calendar rule.
+// Explicit Date arguments retain normal parsing; only "now" is frozen in the VM.
+function frozenClock(parts) {
+  let now = new Date(...parts).getTime();
+  class Clock extends Date {
+    constructor(...args) { super(...(args.length ? args : [now])); }
+    static now() { return now; }
+  }
+  return { Clock, set: value => { now = value.getTime(); } };
+}
+async function run(fixtureFactory = fixture) {
+  // Monday: the existing M/W/F completion case is a real occurrence today.
+  const { Clock } = frozenClock([2026, 9, 12, 12]);
+  const fixture = (os = 'android') => fixtureFactory(os, Clock);
+  const makeItem = (overrides = {}) => baseMakeItem({
+    startAt: new Clock(Clock.now() + 3600000).toISOString(),
+    createdAt: new Clock().toISOString(), updatedAt: new Clock().toISOString(), ...overrides,
+  });
   let checks = 0;
   const check = message => { checks++; console.log(`PASS ${message}`); };
   const h = fixture(), s = h.storage(), q = h.queue();
@@ -85,16 +111,17 @@ async function run() {
   check('temporary failure retains item and queue with backoff');
   await h.storage().mergeServerItems('A', [makeItem({ id: 'one', title: 'Stale', serverRevision: 1 })], () => true);
   assert.equal((await h.storage().getItems())[0].title, 'Edit two'); check('pending update wins over server merge');
+  const patchesBeforeRetry = h.calls.filter(row => row.method === 'PATCH').length;
   h.online(true); await h.queue().transactItemState('A', state => { state.queue.forEach(op => op.retryAt = 0); });
   await Promise.all([h.sync().syncItems(), h.sync().syncItems(), h.sync().syncItems()]);
-  assert.equal(h.calls.filter(row => row.method === 'PATCH').length, 1); check('concurrent triggers do not duplicate writes');
+  assert.equal(h.calls.filter(row => row.method === 'PATCH').length, patchesBeforeRetry + 1); check('concurrent triggers do not duplicate writes');
   h.online(false); await h.storage().deleteItem('one');
   state = await h.queue().readItemSyncState('A'); assert.equal(state.queue[0].type, 'delete'); assert.ok(state.tombstones.one); assert.equal(state.items.length, 0);
   await h.storage().mergeServerItems('A', [makeItem({ id: 'one', serverRevision: 2 })], () => true); assert.equal((await h.storage().getItems()).length, 0);
   check('offline delete hides immediately and tombstone prevents resurrection');
   h.online(true); await h.sync().syncItems(); state = await h.queue().readItemSyncState('A'); assert.equal(state.queue.length, 0); assert.equal(state.tombstones.one.synced, true);
   check('delete sends after reconnect and retains minimal synced tombstone');
-  const remote = { ...makeItem({ id: 'remote', title: 'Restored' }), clientItemId: 'remote', revision: 4, serverUpdatedAt: new Date().toISOString() };
+  const remote = { ...makeItem({ id: 'remote', title: 'Restored' }), clientItemId: 'remote', revision: 4, serverUpdatedAt: new Clock().toISOString() };
   h.rows.set('Bearer A:remote', remote); await h.sync().syncItems();
   assert.equal((await h.storage().getItemById('remote')).title, 'Restored'); assert.equal(h.alarms.size, 1);
   await h.sync().syncItems(); assert.equal(h.alarms.size, 1); check('server-only future item restores and schedules once');
@@ -117,8 +144,8 @@ async function run() {
   await race.sync().syncItems(); assert.ok(race.rows.get('Bearer A:race').deletedAt); check('delete during in-flight create survives acknowledgement');
   const conflict = fixture(); conflict.online(true); await conflict.storage().saveItem(makeItem({ id: 'conflict' })); await conflict.sync().syncItems();
   await conflict.storage().updateItem({ ...(await conflict.storage().getItems())[0], title: 'Local change' }); conflict.rows.get('Bearer A:conflict').revision++;
-  await conflict.sync().syncItems(); state = await conflict.queue().readItemSyncState('A'); assert.equal(state.items[0].syncStatus, 'sync_error'); assert.equal(state.items[0].title, 'Local change');
-  check('revision conflict preserves local change and marks sync_error');
+  await conflict.sync().syncItems(); state = await conflict.queue().readItemSyncState('A'); assert.equal(state.items[0].syncStatus, 'conflict'); assert.equal(state.items[0].title, 'Local change');
+  check('revision conflict preserves local change and marks conflict');
   const pending = fixture(); await pending.storage().saveItem(makeItem({ id: 'local-only' }));
   await pending.storage().mergeServerItems('A', [], () => true);
   assert.equal((await pending.storage().getItems())[0].id, 'local-only'); check('pending create survives absence in server fetch');
@@ -152,7 +179,7 @@ async function run() {
   for (let i = 0; i < 100 && (await runtime.queue().readItemSyncState('A')).queue.length; i++) await wait();
   assert.equal((await runtime.queue().readItemSyncState('A')).queue.length, 0); stop();
   check('foreground reconciliation drains pending operations');
-  const startup = fixture(); startup.online(true); startup.rows.set('Bearer A:startup', { ...makeItem({ id: 'startup' }), clientItemId: 'startup', revision: 1, serverUpdatedAt: new Date().toISOString() });
+  const startup = fixture(); startup.online(true); startup.rows.set('Bearer A:startup', { ...makeItem({ id: 'startup' }), clientItemId: 'startup', revision: 1, serverUpdatedAt: new Clock().toISOString() });
   const stopStartup = startup.load('services/itemSyncRuntime.ts').startItemSyncRuntime();
   for (let i = 0; i < 100 && !(await startup.queue().readItemSyncState('A')).items.length; i++) await wait();
   assert.equal((await startup.storage().getItems()).length, 1); stopStartup(); check('startup/session runtime restores server-only items');
@@ -172,6 +199,47 @@ async function run() {
   await history.storage().toggleComplete('series', 'Finished'); state = await history.queue().readItemSyncState('A');
   assert.equal(state.items.find(item => item.id === 'series').completionNote, 'Finished'); assert.ok(state.items.find(item => item.id === 'series').dailySeries);
   assert.ok(history.alarms.size); assert.equal(history.calls.length, 0); check('offline recurring alarms and completion history remain local');
+  const future = fixture();
+  await future.storage().saveItem(makeItem({ id: 'future-series', repeat: 'weekly', weeklyDays: [2],
+    startAt: new Clock(2026, 9, 13, 13).toISOString() }));
+  await future.storage().toggleComplete('future-series', 'Must not complete tomorrow');
+  const futureState = await future.queue().readItemSyncState('A');
+  assert.equal(futureState.items[0].completionNote, undefined);
+  assert.equal(Boolean(futureState.items[0].completed), false);
+  check('future weekly occurrence cannot be completed before its local date');
+  for (const [name, parts] of [
+    ['mid-month Saturday', [2026, 9, 17, 12]],
+    ['month-end', [2026, 3, 30, 12]],
+    ['year-end near midnight', [2026, 11, 31, 23, 59, 59, 999]],
+    ['next-day midnight', [2027, 0, 1, 0, 0, 0, 0]],
+    ['leap day', [2028, 1, 29, 12]],
+    ['DST spring date', [2026, 2, 8, 0, 0]],
+    ['DST autumn date', [2026, 10, 1, 0, 0]],
+  ]) {
+    const clock = frozenClock(parts), now = new clock.Clock();
+    const boundary = fixtureFactory('android', clock.Clock);
+    const timestamp = now.toISOString();
+    await boundary.storage().saveItem(baseMakeItem({ id: 'boundary', repeat: 'weekly', weeklyDays: [now.getDay()],
+      startAt: timestamp, createdAt: timestamp, updatedAt: timestamp }));
+    await boundary.storage().toggleComplete('boundary', 'Finished');
+    let saved = await boundary.queue().readItemSyncState('A');
+    assert.equal(saved.items.length, 1, name);
+    assert.equal(saved.items[0].completionNote, 'Finished', name);
+    assert.equal(saved.items[0].completedAt, timestamp, name);
+    assert.equal(saved.items[0].occurrenceHistory[0].completionNote, 'Finished', name);
+    assert.equal(saved.queue.length, 1, name);
+    assert.equal(boundary.calls.length, 0, name);
+    // Advance by local calendar arithmetic, including across DST and year-end.
+    clock.set(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0));
+    await boundary.storage().getItems();
+    saved = await boundary.queue().readItemSyncState('A');
+    assert.equal(saved.items.length, 1, name);
+    assert.equal(saved.items[0].occurrenceHistory[0].completionNote, 'Finished', name);
+    boundary.online(true); await boundary.sync().syncItems();
+    assert.equal(boundary.rows.size, 1, name);
+    assert.equal((await boundary.queue().readItemSyncState('A')).queue.length, 0, name);
+    check(`controlled local clock: ${name}, completion history survives midnight and sync`);
+  }
   for (const type of ['reminder', 'task']) {
     const group = fixture();
     const selected = makeItem({ id: 'selected', type });
@@ -182,7 +250,7 @@ async function run() {
     const completed = await group.storage().toggleComplete('selected', '  Only selected  ');
     assert.equal(completed.status, 'Done'); assert.equal(completed.completionNote, 'Only selected');
     assert.ok(Number.isFinite(Date.parse(completed.completedAt)));
-    assert.equal(group.load('utils/itemStatus.ts').getItemStatus(completed, new Date(Date.now() + 86400000)), 'Done');
+    assert.equal(group.load('utils/itemStatus.ts').getItemStatus(completed, new Clock(Clock.now() + 86400000)), 'Done');
     assert.deepEqual(clone(await group.storage().getItemById('sibling')), sibling);
     state = await group.queue().readItemSyncState('A');
     assert.equal(Boolean(state.items.find(row => row.id === 'other').completed), false);

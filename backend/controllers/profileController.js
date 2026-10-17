@@ -1,7 +1,9 @@
+import Session from "../models/Session.js";
+import { revokeSessions } from "../services/sessions.js";
 import bcrypt from "bcryptjs";
 import { Buffer } from "node:buffer";
 import jwt from "jsonwebtoken";
-import { createAccessToken, tokenVersion } from "../services/accessToken.js";
+import { tokenVersion } from "../services/accessToken.js";
 import User from "../models/user.js";
 import Organization from "../models/Organization.js";
 import { normalize, validEmail } from "../services/identity.js";
@@ -32,6 +34,15 @@ export async function authenticate(req, res, next) {
     const version = payload.tokenVersion === undefined ? 0 : payload.tokenVersion;
     if (!Number.isSafeInteger(version) || version < 0 || version !== tokenVersion(req.user)) {
       return res.status(401).json({ message: "Your session has expired. Please sign in again." });
+    }
+    if (payload.sessionId || req.user.sessionEnforced) {
+      const row = typeof payload.sessionId === "string" && await Session.findOne({ userId: req.user._id,
+        sessionId: payload.sessionId, tokenVersion: version, revokedAt: null, expiresAt: { $gt: new Date() } });
+      if (!row) return res.status(401).json({ code: "SESSION_REVOKED", message: "Your session ended. Please sign in again." });
+      req.authSession = row;
+      if (+new Date(row.lastSeenAt) < Date.now() - 5 * 60 * 1000) {
+        await Session.updateOne({ userId: req.user._id, sessionId: row.sessionId, lastSeenAt: row.lastSeenAt }, { $set: { lastSeenAt: new Date() } });
+      }
     }
     next();
   } catch { res.status(503).json({ message: "Account service unavailable. Try again." }); }
@@ -98,7 +109,8 @@ export async function changePassword(req, res) {
     const user = await User.findOneAndUpdate({ _id: req.user._id, password: req.user.password },
       { $set: { password }, $inc: { tokenVersion: 1 } }, { returnDocument: "after" });
     if (!user) return res.status(409).json({ message: "Password changed elsewhere. Try again." });
-    res.json({ message: "Password updated.", token: createAccessToken(user), user: publicUser(user) });
+    if (user.sessionEnforced) await revokeSessions(user._id, "password_changed", tokenVersion(user));
+    res.json({ message: "Password updated. Please sign in again.", requiresLogin: true });
   } catch { res.status(503).json({ message: "Could not change password." }); }
 }
 

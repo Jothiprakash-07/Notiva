@@ -77,7 +77,7 @@ test("incorrect current password never updates account", async () => {
   const res = response(); await changePassword({ user: { ...user, password }, body: { currentPassword: "wrong", newPassword: "new-password" } }, res);
   assert.equal(res.code, 400); assert.ok(res.body.errors.currentPassword);
 });
-test("password change atomically increments version and replaces the current token", async () => {
+test("password change atomically increments version and requires normal login", async () => {
   process.env.JWT_SECRET = "test-only-secret";
   const password = await bcrypt.hash("old-password", 4);
   const current = { ...user, password };
@@ -90,15 +90,13 @@ test("password change atomically increments version and replaces the current tok
   };
   const res = response(); await changePassword({ user: { ...current }, body: { currentPassword: "old-password", newPassword: "new-password" } }, res);
   assert.equal(res.code, 200); assert.ok(await bcrypt.compare("new-password", current.password));
-  assert.equal(res.body.password, undefined); assert.equal(res.body.user.tokenVersion, undefined);
-  assert.equal(jwt.verify(res.body.token, process.env.JWT_SECRET).tokenVersion, 1);
+  assert.equal(res.body.password, undefined); assert.equal(res.body.requiresLogin, true);
+  assert.equal(res.body.token, undefined);
   User.findById = async () => current;
   const rejected = response();
   await authenticate({ headers: { authorization: `Bearer ${oldToken}` } }, rejected, () => assert.fail("old token must be revoked"));
   assert.equal(rejected.code, 401);
-  let accepted = false;
-  await authenticate({ headers: { authorization: `Bearer ${res.body.token}` } }, response(), () => { accepted = true; });
-  assert.ok(accepted);
+
 });
 
 test("password change conflict does not issue a replacement token", async () => {

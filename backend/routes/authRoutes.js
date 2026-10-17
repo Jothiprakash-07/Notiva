@@ -8,6 +8,7 @@ import {
 } from "../controllers/authController.js";
 
 import { authenticate, getProfile, updateProfile, changePassword, joinOrganization, leaveOrganization } from "../controllers/profileController.js";
+import { transfer, refresh, logout, logoutWithRefresh, listSessions } from "../controllers/sessionController.js";
 const router = express.Router();
 import { setNotivaId, notivaIdAvailability, sendRecoveryEmailOtp, verifyRecoveryEmail, forgotPassword, verifyResetOtp, resetPassword, recoveryRateLimit } from "../controllers/recoveryController.js";
 
@@ -31,7 +32,12 @@ router.post("/leave-organization", authenticate, leaveOrganization);
 router.post("/register", registerUser);
 
 // POST /api/auth/login
-router.post("/login", loginUser);
+router.post("/login", recoveryRateLimit, loginUser);
+router.post("/replace-session", recoveryRateLimit, transfer);
+router.post("/refresh", recoveryRateLimit, refresh);
+router.post("/logout", logoutWithRefresh, authenticate, logout);
+router.get("/sessions", authenticate, listSessions);
+router.delete("/sessions/:sessionId", authenticate, logout);
 
 // POST /api/auth/organization-register
 router.post("/organization-register", registerOrganization);

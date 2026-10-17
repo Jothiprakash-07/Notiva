@@ -37,7 +37,7 @@ function load(file) {
     if (id === '@expo/vector-icons/Ionicons') return { default: () => null };
     if (id === '@react-native-community/datetimepicker') return { default: props => { picker = props; return null; } };
     if (id === 'expo-router') return { router: { push() {}, setParams: next => { params = next; render(); } }, useLocalSearchParams: () => params, useFocusEffect: callback => React.useEffect(callback, [callback]) };
-    if (id.endsWith('services/itemStorage')) return { getItems: async () => rows, toggleComplete: async () => { throw Error('Unexpected storage mutation'); } };
+    if (id.endsWith('services/itemStorage')) return { subscribeItemRestore: () => () => {}, getItems: async () => rows, toggleComplete: async () => { throw Error('Unexpected storage mutation'); } };
     if (id.endsWith('CompletionNoteModal')) return { default: () => null };
     if (id.endsWith('ReminderCard')) return { default: props => React.createElement('div', { 'data-item': props.id }, props.title) };
     return load(path.resolve(path.dirname(full), id + '.ts'));

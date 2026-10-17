@@ -1,5 +1,4 @@
 import { router } from "expo-router";
-import { useAuth } from "../../../contexts/AuthContext";
 import { suggestNotivaId } from "../../../services/notivaIdentityService";
 import { isValidNotivaId } from "../../../utils/notivaId";
 import { useNotivaIdAvailability, ID_FORMAT, ID_TAKEN } from "../../../hooks/useNotivaIdAvailability";
@@ -7,6 +6,7 @@ import Ionicons from "@expo/vector-icons/Ionicons";
 import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -39,7 +39,6 @@ type FieldErrors = {
 export default function UserRegisterScreen({
   onBack,
 }: UserRegisterScreenProps) {
-  const { signIn } = useAuth();
   const [notivaId, setNotivaId] = useState("");
   const [manuallyEdited, setManuallyEdited] = useState(false);
   const manualRef = useRef(false);
@@ -190,13 +189,10 @@ export default function UserRegisterScreen({
       }
 
       createdRef.current = true;
-      if (typeof data?.token !== "string" || !data.token.trim() || typeof data?.user?.id !== "string" ||
-          !data.user.id || typeof data.user.fullName !== "string" || !data.user.notivaId) {
-        throw new Error("Account created, but automatic sign-in could not be completed. Return to Login and use your Notiva ID.");
-      }
-      try { await signIn({ token: data.token, user: data.user }); }
-      catch { throw new Error("Account created, but your session could not be saved. Return to Login and sign in with your Notiva ID."); }
-      router.replace("/(tabs)");
+      setPassword(""); setConfirmPassword("");
+      setSuccess("Account created successfully");
+      Alert.alert("Account created successfully", "Sign in with your Notiva ID and password.");
+      if (onBack) onBack(); else router.replace("/");
 
     } catch (error) {
       const message = createdRef.current && error instanceof Error ? error.message : "Unable to connect. Please try again.";

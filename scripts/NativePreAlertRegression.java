@@ -11,6 +11,20 @@ class NativePreAlertRegression {
   static void check(boolean value, String message) { if (!value) throw new AssertionError(message); }
   public static void main(String[] args) {
     AlarmStore s = AlarmStore.INSTANCE;
+    for (int day : new int[]{29,30,31}) {
+      Calendar anchor = Calendar.getInstance(); anchor.clear(); anchor.set(2026,0,day,12,0);
+      JSONObject monthly = new JSONObject().put("startAt",anchor.getTimeInMillis()).put("repeat","monthly")
+        .put("seriesId","month").put("firstAt",anchor.getTimeInMillis()).put("anchorItemId","month");
+      Calendar due = Calendar.getInstance(); due.setTimeInMillis(s.next(monthly,anchor.getTimeInMillis()));
+      check(due.get(Calendar.MONTH)==2 && due.get(Calendar.DAY_OF_MONTH)==day,"invalid February day skipped");
+      monthly.put("excludedDates",new JSONArray().put(s.dayKey(due.getTimeInMillis())));
+      long following=s.next(monthly,anchor.getTimeInMillis());
+      check(following>due.getTimeInMillis(),"monthly completed occurrence excluded");
+    }
+    Calendar leap=Calendar.getInstance(); leap.clear(); leap.set(2024,1,29,12,0);
+    JSONObject yearly=new JSONObject().put("startAt",leap.getTimeInMillis()).put("repeat","yearly");
+    Calendar nextLeap=Calendar.getInstance(); nextLeap.setTimeInMillis(s.next(yearly,leap.getTimeInMillis()));
+    check(nextLeap.get(Calendar.YEAR)==2028 && nextLeap.get(Calendar.MONTH)==1 && nextLeap.get(Calendar.DAY_OF_MONTH)==29,"Feb 29 skips non-leap years");
     JSONObject ownerA = new JSONObject().put("itemId", "notiva-account[A]::one").put("startAt", at(28,10,30));
     JSONObject ownerA2 = new JSONObject().put("itemId", "notiva-account[A]::two").put("startAt", at(28,10,30));
     JSONObject ownerB = new JSONObject().put("itemId", "notiva-account[B]::one").put("startAt", at(28,10,30));
