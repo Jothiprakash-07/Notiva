@@ -13,6 +13,7 @@ import java.util.Locale
 
 /** Durable schedules; no JavaScript runtime is needed to fire or re-arm an alarm. */
 object AlarmStore {
+  private var now: () -> Long = { System.currentTimeMillis() }
   private fun soundPrefs(c: Context) = c.getSharedPreferences("notiva_alarm_preferences", Context.MODE_PRIVATE)
   fun setAlarmSound(c: Context, sound: String) {
     check(soundPrefs(c).edit().putString("alarm_sound", AlarmAudio.normalize(sound)).commit()) {
@@ -28,9 +29,20 @@ object AlarmStore {
   fun allowed(c: Context) = Build.VERSION.SDK_INT < 31 || manager(c).canScheduleExactAlarms()
   fun get(c: Context, id: String): JSONObject? = prefs(c).getString("schedule:$id", null)?.let { JSONObject(it) }
   fun intent(c: Context, id: String) = Intent(c, AlarmReceiver::class.java).setData(Uri.parse("notiva-alarm:" + Uri.encode(id)))
-  fun pending(c: Context, id: String): PendingIntent = PendingIntent.getBroadcast(c, 0, intent(c, id), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+  private fun deliveryIntent(c: Context, id: String, pre: Boolean): Intent {
+    val data = get(c, id)
+    val key = if (data?.has("sharedRecurrence") == true) {
+      val due = if (pre) data.optLong("preDue") else data.optLong("nextAt")
+      SharedAlarmRecurrence.key(data, due)
+    } else null
+    return intent(c, id).apply {
+      if (key != null) setData(Uri.parse("notiva-alarm:" + Uri.encode(id) + "#" + Uri.encode(key)))
+      if (pre) action = "pre"
+    }
+  }
+  fun pending(c: Context, id: String): PendingIntent = PendingIntent.getBroadcast(c, 0, deliveryIntent(c, id, false), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
   private fun prePending(c: Context, id: String): PendingIntent = PendingIntent.getBroadcast(c, 0,
-    intent(c, id).setAction("pre"), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+    deliveryIntent(c, id, true), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
   private fun cancelLegacyPre(c: Context, id: String) {
     val old = PendingIntent.getBroadcast(c, 0, intent(c, id).setAction("daily-pre"),
       PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE)
@@ -41,6 +53,7 @@ object AlarmStore {
     String.format(Locale.US, "%04d-%02d-%02d", get(Calendar.YEAR), get(Calendar.MONTH) + 1, get(Calendar.DAY_OF_MONTH))
   }
   fun occurrence(data: JSONObject, due: Long): JSONObject {
+    if (data.has("sharedRecurrence")) return SharedAlarmRecurrence.occurrence(data, due)
     val fired = JSONObject(data.toString())
     if (data.has("seriesId")) {
       val series = data.getString("seriesId")
@@ -99,7 +112,7 @@ object AlarmStore {
     val id = data.getString("id")
     manager(c).cancel(prePending(c, id))
     cancelLegacyPre(c, id)
-    val due = if (soundPrefs(c).getBoolean("pre_enabled", true) && allowed(c)) nextPreDue(data, System.currentTimeMillis()) else null
+    val due = if (soundPrefs(c).getBoolean("pre_enabled", true) && allowed(c)) nextPreDue(data, now()) else null
     data.remove("preDue")
     if (due != null) data.put("preDue", due)
     check(prefs(c).edit().putString("schedule:$id", data.toString()).commit())
@@ -115,6 +128,7 @@ object AlarmStore {
   // Calendar arithmetic preserves local wall time across DST. Invalid month days
   // (31st / February 29) are skipped, rather than drifting to the end of a month.
   fun next(data: JSONObject, after: Long): Long? {
+    if (data.has("sharedRecurrence")) return SharedAlarmRecurrence.next(data, after)
     val start = data.getLong("startAt")
     val repeat = data.optString("repeat", "none")
     if (repeat == "none") return if (start > after) start else null
@@ -156,7 +170,7 @@ object AlarmStore {
     error("Could not calculate next alarm")
   }
 
-  @Synchronized fun schedule(c: Context, data: JSONObject, after: Long = System.currentTimeMillis(), rearmPre: Boolean = true): String {
+  @Synchronized fun schedule(c: Context, data: JSONObject, after: Long = now(), rearmPre: Boolean = true): String {
     check(allowed(c)) { "Allow Alarms & reminders access before saving this reminder." }
     val id = data.getString("id")
     val previous = get(c, id)
@@ -164,11 +178,15 @@ object AlarmStore {
       data.put("preDeliveredDue", maxOf(previous.optLong("preDeliveredDue"), data.optLong("preDeliveredDue")))
     }
     val time = next(data, after) ?: error("Choose a future alarm time.")
+    if (data.has("sharedRecurrence")) {
+      manager(c).cancel(pending(c, id))
+      data.put("occurrenceKey", SharedAlarmRecurrence.key(data, time))
+    }
     data.put("nextAt", time)
     val show = PendingIntent.getActivity(c, 0, c.packageManager.getLaunchIntentForPackage(c.packageName)!!,
       PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-    manager(c).setAlarmClock(AlarmManager.AlarmClockInfo(time, show), pending(c, id))
     check(prefs(c).edit().putString("schedule:$id", data.toString()).commit()) { "Could not save alarm" }
+    manager(c).setAlarmClock(AlarmManager.AlarmClockInfo(time, show), pending(c, id))
     if (rearmPre) armPre(c, data)
     return id
   }
@@ -180,22 +198,22 @@ object AlarmStore {
     cancelLegacyPre(c, id)
     c.getSystemService(NotificationManager::class.java).cancel("notiva-pre:$id", 1)
     prefs(c).edit().remove("schedule:$id").commit()
-    AlarmService.instance?.remove(id)
+    AlarmService.instance?.removeSource(id)
   }
 
   @Synchronized fun fire(c: Context, id: String) {
     val data = get(c, id) ?: return
     // Ignore stale/cancelled broadcasts; re-arm before starting the foreground service.
     val due = data.getLong("nextAt")
-    if (due > System.currentTimeMillis() + 1000) return
+    if (due > now() + 1000) return
     val fired = schedules(c).filter { groupSlot(it) == groupSlot(data, due) }.map { member ->
       val source = member.getString("id")
       val memberDue = member.getLong("nextAt")
       manager(c).cancel(pending(c, source))
       clearPreCard(c, source)
-      prefs(c).edit().remove("schedule:$source").commit()
+      if (!member.has("sharedRecurrence")) prefs(c).edit().remove("schedule:$source").commit()
       val result = occurrence(member, memberDue)
-      if (member.optString("repeat") != "none") schedule(c, member, maxOf(memberDue, System.currentTimeMillis()), false)
+      if (member.optString("repeat") != "none") schedule(c, member, maxOf(memberDue, now()), member.has("sharedRecurrence"))
       result
     }
     val service = Intent(c, AlarmService::class.java).putExtra("alarm", fired.first().toString())
@@ -207,7 +225,7 @@ object AlarmStore {
     val data = get(c, id) ?: return
     if (!soundPrefs(c).getBoolean("pre_enabled", true) || data.optInt("preAlertMinutes") <= 0) return
     val due = data.optLong("preDue", 0)
-    val now = System.currentTimeMillis()
+    val now = now()
     if (due <= data.optLong("preDeliveredDue") || now + 1000 < due - data.optInt("preAlertMinutes") * 60_000L) return
     if (now >= due) { data.put("preDeliveredDue", due); armPre(c, data); return }
     val preTime = (due - data.optInt("preAlertMinutes") * 60_000L) / 60_000L
@@ -232,7 +250,10 @@ object AlarmStore {
 
   private fun postPreCard(c: Context, fired: List<JSONObject>, tag: String, vibration: Boolean) {
     val data = fired.first()
-    val open = if (fired.size == 1) Intent(Intent.ACTION_VIEW, Uri.parse("reminder54://screens/details/${Uri.encode(data.getString("itemId"))}"))
+    val shared = data.optJSONObject("sharedRecurrence")
+    val route = if (shared != null) "reminder54://screens/shared/item?organizationId=${Uri.encode(shared.getString("organizationId"))}&id=${Uri.encode(shared.getString("sharedItemId"))}&occurrenceKey=${Uri.encode(data.getString("occurrenceKey"))}"
+      else "reminder54://screens/details/${Uri.encode(data.getString("itemId"))}"
+    val open = if (fired.size == 1) Intent(Intent.ACTION_VIEW, Uri.parse(route))
       .setPackage(c.packageName) else c.packageManager.getLaunchIntentForPackage(c.packageName)!!
     open.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     val tap = PendingIntent.getActivity(c, 0, open, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -263,14 +284,14 @@ object AlarmStore {
     if (!allowed(c)) return
     prefs(c).all.filterKeys { it.startsWith("schedule:") }.values.forEach { raw ->
       val data = JSONObject(raw as String)
-      if (next(data, System.currentTimeMillis()) != null) schedule(c, data)
+      if (next(data, now()) != null) schedule(c, data)
       else prefs(c).edit().remove("schedule:${data.getString("id")}").commit()
     }
   }
 
   @Synchronized fun repairFuture(c: Context) {
     if (!allowed(c)) return
-    val now = System.currentTimeMillis()
+    val now = now()
     prefs(c).all.filterKeys { it.startsWith("schedule:") }.values.forEach { raw ->
       val data = JSONObject(raw as String)
       // Do not consume an overdue main alarm racing its receiver on foreground.
@@ -287,6 +308,11 @@ class AlarmReceiver : BroadcastReceiver() {
       return
     }
     val id = intent.data?.schemeSpecificPart ?: return
+    val stored = AlarmStore.get(context, id)
+    if (stored?.has("sharedRecurrence") == true) {
+      val due = if (intent.action == "pre") stored.optLong("preDue") else stored.optLong("nextAt")
+      if (intent.data?.fragment != SharedAlarmRecurrence.key(stored, due)) return
+    }
     try {
       if (intent.action == "pre") AlarmStore.preAlert(context, id)
       else if (intent.action != "daily-pre") AlarmStore.fire(context, id)

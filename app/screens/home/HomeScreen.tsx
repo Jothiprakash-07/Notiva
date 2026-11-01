@@ -1258,6 +1258,7 @@ export default function HomeScreen() {
                         }
                       >
                         <ReminderCard
+                          onResolveConflict={reminder.syncStatus === "conflict" ? () => router.push({ pathname: "/screens/sync-conflict", params: { id: reminder.id } } as any) : undefined}
                           preview={reminder.preview}
                           id={
                             reminder.id

@@ -40,6 +40,6 @@ router.get("/sessions", authenticate, listSessions);
 router.delete("/sessions/:sessionId", authenticate, logout);
 
 // POST /api/auth/organization-register
-router.post("/organization-register", registerOrganization);
+router.post("/organization-register", authenticate, registerOrganization);
 
 export default router;

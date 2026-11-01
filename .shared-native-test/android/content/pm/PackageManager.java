@@ -1,0 +1,1 @@
+package android.content.pm; public class PackageManager {public android.content.Intent getLaunchIntentForPackage(String n){return new android.content.Intent();}}

@@ -2,14 +2,21 @@ import mongoose from "mongoose";
 
 const organizationSchema = new mongoose.Schema(
   {
-    // GST is optional.
-    // User can register organization using GST only OR full details.
-    gstNumber: {
-      type: String,
-      trim: true,
-      default: "",
-    },
-
+    name: { type: String, trim: true, maxlength: 100, required() { return this.status === "active"; } },
+    normalizedName: { type: String, trim: true },
+    joinCode: { type: String, uppercase: true, trim: true, required() { return this.status === "active"; } },
+    joinCodeVersion: { type: Number, default: 1 },
+    joinCodeRegeneratedAt: Date,
+    ownerUserId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required() { return this.status === "active"; } },
+    createdByUserId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required() { return this.status === "active"; } },
+    // Old records have no verified creator; never infer ownership from a code.
+    status: { type: String, enum: ["legacy_unclaimed", "active", "deleted"], default: "legacy_unclaimed" },
+    revision: { type: Number, default: 0 },
+    employeeSharingEnabled: { type: Boolean, default: false },
+    ownershipTransferredAt: Date,
+    ownershipTransferredByUserId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    deletedAt: Date,
+    // Retained legacy registration/contact metadata. New creation requires a name.
     // Required condition is handled in controller.
     organizationName: {
       type: String,
@@ -17,7 +24,7 @@ const organizationSchema = new mongoose.Schema(
       default: "",
     },
 
-    // Email is optional when GST is provided.
+    // Organization contact metadata.
     email: {
       type: String,
       trim: true,
@@ -25,21 +32,19 @@ const organizationSchema = new mongoose.Schema(
       default: "",
     },
 
-    // Mobile number is optional when GST is provided.
     mobileNumber: {
       type: String,
       trim: true,
       default: "",
     },
 
-    // Address is optional when GST is provided.
     address: {
       type: String,
       trim: true,
       default: "",
     },
 
-    // Team members will join using this organization code.
+    // Compatibility mirror only. New joins resolve joinCode and require approval.
     organizationCode: {
       type: String,
       required: true,
@@ -56,6 +61,9 @@ const organizationSchema = new mongoose.Schema(
     timestamps: true,
   }
 );
+
+organizationSchema.index({ joinCode: 1 }, { unique: true, partialFilterExpression: { joinCode: { $type: "string" } } });
+organizationSchema.index({ ownerUserId: 1, status: 1 });
 
 const Organization = mongoose.model("Organization", organizationSchema);
 

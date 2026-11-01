@@ -4,6 +4,8 @@ import cors from "cors";
 import dotenv from "dotenv";
 
 import authRoutes from "./routes/authRoutes.js";
+import organizationRoutes from "./routes/organizationRoutes.js";
+import { prepareOrganizationIndexes } from "./services/organizationIndexes.js";
 import itemRoutes, { itemRequestError } from "./routes/itemRoutes.js";
 import { prepareItemIndexes, prepareDeletedItemIndexes } from "./services/itemIndexes.js";
 import { startCleanupScheduler } from "./services/cleanupScheduler.js";
@@ -31,6 +33,7 @@ app.get("/", (req, res) => {
 
 // Auth API
 app.use("/api/auth", authRoutes);
+app.use("/api/organizations", organizationRoutes);
 app.use("/api/items", itemRoutes);
 app.use(itemRequestError);
 
@@ -41,6 +44,7 @@ mongoose
   .then(async () => {
     await prepareIdentityIndexes();
     await prepareSessionIndexes();
+    await prepareOrganizationIndexes();
     await prepareItemIndexes();
     await prepareDeletedItemIndexes();
     startCleanupScheduler();

@@ -36,6 +36,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const [isLoading, setIsLoading] = useState(true);
   const liveSession = useRef<AuthSession | null>(null);
   const sessionGeneration = useRef(0);
+  const pendingSignIn = useRef<number | null>(null);
   const renewedTokens = useRef(new Set<string>());
   const writes = useRef<Promise<unknown>>(Promise.resolve());
   const persist = useCallback(<T,>(action: () => Promise<T>): Promise<T> => {
@@ -66,14 +67,19 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
   const signIn = useCallback(async (nextSession: AuthSession) => {
     const generation = ++sessionGeneration.current;
+    pendingSignIn.current = generation;
     renewedTokens.current.clear();
-    await persist(async () => {
-      if (generation !== sessionGeneration.current) return;
-      await writeAuthSession(nextSession);
-      if (generation !== sessionGeneration.current) return;
-      selectItemAccount(nextSession); liveSession.current = nextSession;
-      setSession(nextSession);
-    });
+    try {
+      await persist(async () => {
+        if (generation !== sessionGeneration.current) return;
+        await writeAuthSession(nextSession);
+        if (generation !== sessionGeneration.current) return;
+        selectItemAccount(nextSession); liveSession.current = nextSession;
+        setSession(nextSession);
+      });
+    } finally {
+      if (pendingSignIn.current === generation) pendingSignIn.current = null;
+    }
   }, [persist]);
 
   const signOut = useCallback(async (expectedSessionId?: string) => {
@@ -120,7 +126,9 @@ export function AuthProvider({ children }: PropsWithChildren) {
   }, [persist]);
 
   useEffect(() => bindSessionTransport({ current: () => liveSession.current, replace: replaceSession,
-    invalidate: async token => { if (liveSession.current?.token === token) await signOut(); } }), [replaceSession, signOut]);
+    // SecureStore still exposes the old session while a manual login is being saved.
+    // A late 401 for that token must not advance the generation and cancel the login.
+    invalidate: async token => { if (pendingSignIn.current === null && liveSession.current?.token === token) await signOut(); } }), [replaceSession, signOut]);
   useEffect(() => {
     const validate = () => {
       const current = liveSession.current;

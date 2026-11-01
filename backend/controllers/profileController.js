@@ -6,6 +6,7 @@ import jwt from "jsonwebtoken";
 import { tokenVersion } from "../services/accessToken.js";
 import User from "../models/user.js";
 import Organization from "../models/Organization.js";
+import { join as joinRequestEndpoint, mutation as organizationMutation } from "./organizationController.js";
 import { normalize, validEmail } from "../services/identity.js";
 
 export const publicUser = user => ({
@@ -51,7 +52,7 @@ export async function authenticate(req, res, next) {
 export async function getProfile(req, res) {
   try {
     const org = req.user.organizationCode
-      ? await Organization.findOne({ organizationCode: req.user.organizationCode }) : null;
+      ? await Organization.findOne({ organizationCode: req.user.organizationCode, status: { $ne: "active" } }) : null;
     res.json({ user: publicUser(req.user), organization: publicOrganization(org) });
   } catch { res.status(503).json({ message: "Could not load profile." }); }
 }
@@ -115,7 +116,13 @@ export async function changePassword(req, res) {
 }
 
 export async function leaveOrganization(req, res) {
+  if (req.body?.organizationId) {
+    req.params = { ...req.params, organizationId: req.body.organizationId };
+    return organizationMutation("leave")(req, res);
+  }
   try {
+    // Without organizationId this legacy endpoint clears obsolete profile metadata
+    // only. It never revokes or changes a normalized membership (including Owner).
     // Match the link observed by authentication so a newer organization is not cleared.
     let user = await User.findOneAndUpdate(
       { _id: req.user._id, organizationCode: req.user.organizationCode },
@@ -132,14 +139,7 @@ export async function leaveOrganization(req, res) {
   } catch { res.status(503).json({ message: "Could not leave organization. Try again." }); }
 }
 
+// Legacy clients receive a pending request, never an immediate membership.
 export async function joinOrganization(req, res) {
-  const code = typeof req.body?.organizationCode === "string" ? req.body.organizationCode.trim().toUpperCase() : "";
-  if (!/^ORG-[A-Z0-9]{6}$/.test(code)) return res.status(400).json({ message: "Enter a valid organization code.", errors: { organizationCode: "Use the code provided by your organization." } });
-  try {
-    const org = await Organization.findOne({ organizationCode: code });
-    if (!org) return res.status(404).json({ message: "Organization not found.", errors: { organizationCode: "No organization matches this code." } });
-    const user = await User.findByIdAndUpdate(req.user._id, { $set: { organizationCode: org.organizationCode } }, { returnDocument: "after" });
-    if (!user) return res.status(404).json({ message: "Account no longer available." });
-    res.json({ user: publicUser(user), organization: publicOrganization(org) });
-  } catch { res.status(503).json({ message: "Could not join organization. Try again." }); }
+  return joinRequestEndpoint(req, res);
 }

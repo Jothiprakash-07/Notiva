@@ -3,7 +3,7 @@ import type { ReminderItem } from "../types/item";
 import { API_BASE_URL } from "./apiConfig";
 import { getItemSyncSession, itemSessionGeneration } from "./itemAccount";
 import { acknowledgeItem, readItemSyncState, transactItemState } from "./itemSyncQueue";
-import { mergeServerItems, applyServerDeletions } from "./itemStorage";
+import { mergeServerItems, applyServerDeletions, notifyItemRollover } from "./itemStorage";
 import type { ServerItemDeletion } from "./itemSyncQueue";
 
 class SyncHttpError extends Error {
@@ -49,7 +49,11 @@ async function run() {
     let claimed = false;
     await transactItemState(userId, state => {
       const current = state.queue.find(row => row.operationId === op.operationId);
-      if (current && active()) { current.attempted = true; current.attemptCount++; claimed = true; }
+      if (current && active()) {
+        current.attempted = true; current.attemptCount++;
+        if (current.type === "create") current.createAttemptPayload ??= current.payload;
+        claimed = true;
+      }
     });
     if (!claimed || !active()) continue;
     try {
@@ -59,6 +63,23 @@ async function run() {
         // Older persisted updates can recover their base from the local copy,
         // never from a newer server fetch. Unknown delete bases stay blocked.
         op.expectedRevision ??= (await readItemSyncState(userId)).items.find(item => item.id === op.clientItemId)?.serverRevision;
+        if (op.type === "delete" && !op.expectedRevision && op.createAttemptPayload) {
+          // Retry the original POST so a delayed first request cannot create an
+          // orphan after an absence check. Unique client IDs arbitrate the retry.
+          let created;
+          try { created = await request(token, "POST", "", op.createAttemptPayload); }
+          catch (error) {
+            if (!(error instanceof SyncHttpError) || error.status !== 409) throw error;
+            created = await request(token, "GET", path);
+          }
+          const remote = created?.item;
+          // Only the unchanged original create is safe to delete automatically.
+          // Never borrow a newer revision, even if its content later matches.
+          if (remote?.clientItemId !== op.clientItemId || remote.revision !== 1 ||
+              !Object.entries(op.createAttemptPayload).every(([key, value]) => JSON.stringify(remote[key]) === JSON.stringify(value)))
+            throw new SyncHttpError(409, { code: "ITEM_REVISION_CONFLICT", serverItem: remote });
+          op.expectedRevision = 1;
+        }
         if (!Number.isSafeInteger(op.expectedRevision) || op.expectedRevision! < 1) throw new SyncHttpError(400);
         await transactItemState(userId, state => {
           const pending = state.queue.find(row => row.operationId === op.operationId);
@@ -113,7 +134,9 @@ async function run() {
           const item = state.items.find(row => row.id === op.clientItemId); if (item) item.syncStatus = "sync_error";
         }
       });
-      if (!permanent) break;
+      if (active() && error instanceof SyncHttpError && error.status === 409) notifyItemRollover();
+      // Each item has its own durable retry deadline. A transient failure must
+      // not starve unrelated operations later in this bounded queue snapshot.
     }
   }
   if (!active()) return;

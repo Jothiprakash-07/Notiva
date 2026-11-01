@@ -1,0 +1,1 @@
+package android.app;public class NotificationChannel {public NotificationChannel(){}public NotificationChannel(String i,CharSequence n,int a){}public void setSound(android.net.Uri u,android.media.AudioAttributes a){}public void enableVibration(boolean b){}public void setVibrationPattern(long[] p){}public void setShowBadge(boolean b){}}

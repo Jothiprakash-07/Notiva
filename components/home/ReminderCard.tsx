@@ -22,6 +22,7 @@ import {
 } from "../../types/item";
 
 type ReminderCardProps = {
+  onResolveConflict?: () => void;
   id: string;
   preview?: boolean;
   historical?: boolean;
@@ -76,6 +77,7 @@ function typeLabel(
 }
 
 export default function ReminderCard({
+  onResolveConflict,
   preview = false,
   historical = false,
   priority,
@@ -219,6 +221,13 @@ export default function ReminderCard({
           styles.content
         }
       >
+        {onResolveConflict && !preview && !historical && (
+          <Pressable accessibilityRole="button" accessibilityLabel="Resolve sync conflict"
+            onPress={event => { event.stopPropagation(); onResolveConflict(); }}
+            style={{ alignSelf: "flex-start", backgroundColor: "#EDE9FE", borderRadius: 6, padding: 6, marginBottom: 6 }}>
+            <Text style={{ color: "#4D3FE6", fontSize: 12, fontWeight: "700" }}>Sync conflict</Text>
+          </Pressable>
+        )}
         {/* Top row */}
         <View
           style={

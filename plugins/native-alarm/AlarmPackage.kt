@@ -53,6 +53,7 @@ class AlarmModule(private val context: ReactApplicationContext) : ReactContextBa
   @ReactMethod fun weeklyOccurrencesVersion(p: Promise) = result(p) { 1 }
   @ReactMethod fun weekdaysOccurrencesVersion(p: Promise) = result(p) { 1 }
   @ReactMethod fun nativePreAlertsVersion(p: Promise) = result(p) { 1 }
+  @ReactMethod fun sharedRecurrenceVersion(p: Promise) = result(p) { 1 }
   @ReactMethod fun setPreAlertSettings(enabled: Boolean, vibration: Boolean, p: Promise) = result(p) {
     AlarmStore.setPreAlertSettings(context, enabled, vibration); null
   }

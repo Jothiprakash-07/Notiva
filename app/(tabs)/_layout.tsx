@@ -1,4 +1,5 @@
-import { Tabs } from "expo-router";
+import { Tabs, useSegments } from "expo-router";
+import { useAuth } from "../../contexts/AuthContext";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import {
   Image,
@@ -17,12 +18,16 @@ const INACTIVE_COLOR = "#8b8f9c";
 
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
+  const segments = useSegments();
+  const { session } = useAuth();
+  const workspace = ["team", "created", "teams", "organization"].includes(segments[segments.length - 1] ?? "");
   // Reserve the system area once, with a small baseline on inset-free phones.
   // Keep the icon/label area constant even when Android reports a larger inset.
   const bottomPadding = Math.max(insets.bottom, 6);
 
   return (
     <Tabs
+      key={session?.sessionId ?? session?.user.id ?? "signed-out"}
       screenOptions={{
         headerShown: false,
 
@@ -104,6 +109,7 @@ export default function TabLayout() {
         name="reminders"
         options={{
           title: "Reminders",
+          href: workspace ? null : undefined,
 
           tabBarIcon: ({
             color,
@@ -122,6 +128,7 @@ export default function TabLayout() {
         name="analytics"
         options={{
           title: "Analytics",
+          href: workspace ? null : undefined,
 
           tabBarIcon: ({
             color,
@@ -137,7 +144,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="team"
         options={{
-          title: "Team",
+          title: workspace ? "Inbox" : "Team",
 
           tabBarIcon: ({
             color,
@@ -156,6 +163,7 @@ export default function TabLayout() {
         name="profile"
         options={{
           title: "Profile",
+          href: workspace ? null : undefined,
 
           tabBarIcon: ({
             color,
@@ -169,6 +177,14 @@ export default function TabLayout() {
           ),
         }}
       />
+      {([
+        ["created", "Created", "create-outline"],
+        ["teams", "Teams", "people-outline"],
+        ["organization", "Organization", "business-outline"],
+      ] as const).map(([name, title, icon]) => <Tabs.Screen key={name} name={name} options={{
+        title, href: workspace ? undefined : null,
+        tabBarIcon: ({ color, focused }) => <View style={[styles.iconWrap, focused && styles.iconWrapActive]}><Ionicons name={icon} size={21} color={color} /></View>,
+      }} />)}
       <Tabs.Screen name="notifications" options={{ href: null }} />
     </Tabs>
   );

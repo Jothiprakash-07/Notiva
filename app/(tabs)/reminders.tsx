@@ -770,6 +770,7 @@ export default function RemindersScreen() {
                     }
                   >
                     <ReminderCard
+                      onResolveConflict={item.syncStatus === "conflict" ? () => router.push({ pathname: "/screens/sync-conflict", params: { id: item.id } } as any) : undefined}
                       preview={item.preview}
                       historical={item.historical}
                       id={item.id}

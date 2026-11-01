@@ -3,8 +3,8 @@ import * as Notifications from "expo-notifications";
 import { nativeAlarm, NATIVE_ALARM_PREFIX } from "./nativeAlarm";
 
 import { ReminderItem } from "../types/item";
-import { getItemAccount, accountAlarmId, localAlarmItemId } from "./itemAccount";
-import { commitLocalItems, readItemSyncState, transactItemState } from "./itemSyncQueue";
+import { getItemAccount, accountAlarmId, localAlarmItemId, itemSessionGeneration } from "./itemAccount";
+import { commitLocalItems, readItemSyncState, transactItemState, itemPayload, notifyItemQueueChanged } from "./itemSyncQueue";
 import type { ServerItemDeletion } from "./itemSyncQueue";
 import { attachDailySeries, dailyTemplate, localDateKey, materializeDaily, dailyOccurrenceId, occurrenceKey, occurrenceResult, mergeOccurrenceHistory, historyItems } from "../utils/dailyRecurrence";
 import { alignWeeklyItem } from "../utils/weeklyRecurrence";
@@ -27,6 +27,66 @@ export function notifyItemRollover() { restoreListeners.forEach(listener => list
 export function subscribeItemRestore(listener: () => void) {
   restoreListeners.add(listener);
   return () => { restoreListeners.delete(listener); };
+}
+
+export async function getItemConflicts(userId: string) {
+  if (userId !== getItemAccount()) return [];
+  const state = await readItemSyncState(userId);
+  if (userId !== getItemAccount()) return [];
+  return state.queue.filter(op => op.error === "conflict" && op.conflict).map(op => ({
+    operationId: op.operationId, id: op.clientItemId, deleting: op.type === "delete",
+    local: state.items.find(item => item.id === op.clientItemId) ??
+      { ...op.payload, id: op.clientItemId, notificationIds: [] } as unknown as ReminderItem,
+    conflict: op.conflict!,
+  }));
+}
+
+/** Resolve only the reviewed operation, atomically with its local item/tombstone. */
+export async function resolveItemConflict(userId: string, id: string, operationId: string, choice: "mine" | "server") {
+  const generation = itemSessionGeneration();
+  const active = () => userId === getItemAccount() && generation === itemSessionGeneration();
+  await mutate(async () => {
+    if (!active()) throw new Error("The active account changed. Reopen this conflict.");
+    await transactItemState(userId, state => {
+      if (!active()) throw new Error("The active account changed. Reopen this conflict.");
+      const op = state.queue.find(row => row.clientItemId === id && row.operationId === operationId && row.error === "conflict");
+      const remote = op?.conflict?.serverItem;
+      if (!op || !remote || remote.id !== id || !Number.isSafeInteger(remote.serverRevision) || remote.serverRevision! < 1)
+        throw new Error("This conflict changed or its server version is unavailable. Reopen it after syncing.");
+      const local = state.items.find(row => row.id === id);
+      if (choice === "mine") {
+        if (op.type !== "delete" && !local) throw new Error("The local version is unavailable.");
+        op.type = op.type === "delete" ? "delete" : "update";
+        op.payload = local ? itemPayload(local) : op.payload;
+        op.expectedRevision = remote.serverRevision;
+        op.operationId = `${Date.now()}-resolved-${Math.random().toString(36).slice(2)}`;
+        op.attemptCount = 0; delete op.attempted; delete op.retryAt; delete op.error; delete op.conflict;
+        if (local) { delete local.conflict; local.syncStatus = op.type === "delete" ? "pending_delete" : "pending_update"; }
+        if (Object.hasOwn(state.tombstones, id)) {
+          delete state.tombstones[id].conflict; state.tombstones[id].syncStatus = "pending_delete";
+        }
+      } else {
+        const cancellations = new Set(state.pendingDeletionCancellations ?? []);
+        for (const handle of [...(local?.notificationIds ?? []), ...(local?.dailySeries?.notificationIds ?? [])]) cancellations.add(handle);
+        if (Platform.OS === "android") {
+          cancellations.add(`${NATIVE_ALARM_PREFIX}${accountAlarmId(id, userId)}`);
+          for (const repeat of ["daily", "weekly", "weekdays", "monthly", "yearly"])
+            cancellations.add(`${NATIVE_ALARM_PREFIX}${repeat}-series:${accountAlarmId(id, userId)}`);
+        }
+        state.pendingDeletionCancellations = [...cancellations];
+        state.queue = state.queue.filter(row => row.clientItemId !== id);
+        delete state.tombstones[id];
+        const restored: ReminderItem = { ...remote, notificationIds: [], syncStatus: "synced", conflict: undefined,
+          lastSyncedAt: new Date().toISOString(), restoreNeedsScheduling: true };
+        if (restored.dailySeries) restored.dailySeries = { ...restored.dailySeries, notificationIds: [], dirty: true };
+        state.items = [...state.items.filter(row => row.id !== id), restored];
+      }
+    });
+  });
+  if (!active()) return;
+  notifyItemRollover(); notifyItemQueueChanged();
+  // Reuse durable cancellation and restore reconciliation, including offline retry.
+  if (choice === "server") await getItems();
 }
 
 /** Upgrade already-saved Expo main alerts once, retaining their pre-alerts. */
@@ -308,7 +368,9 @@ export function mergeServerItems(userId: string, serverItems: ReminderItem[], ac
           // Preserve handles when scheduling fields haven't changed.
           const scheduleFields = ["startAt", "endAt", "repeat", "weeklyDays", "alertBefore", "completed", "status", "dailySeries"] as const;
           restored.notificationIds = existing.notificationIds;
-          if (scheduleFields.every(key => JSON.stringify(existing[key]) === JSON.stringify(incoming[key]))) restored.restoreNeedsScheduling = false;
+          // An equivalent revision must retain an interrupted/permission-blocked retry.
+          if (scheduleFields.every(key => JSON.stringify(existing[key]) === JSON.stringify(incoming[key])))
+            restored.restoreNeedsScheduling = existing.restoreNeedsScheduling ?? false;
           if (restored.dailySeries && existing.dailySeries) restored.dailySeries.notificationIds = existing.dailySeries.notificationIds;
         }
         if (index < 0) state.items.push(restored); else state.items[index] = restored;
@@ -317,8 +379,12 @@ export function mergeServerItems(userId: string, serverItems: ReminderItem[], ac
     });
     if (!active()) return;
     const items = await read();
-    await reconcileRestored(items, active);
-    await reconcileDaily(items);
+    // A persisted replacement may still be waiting for old OS alarms to cancel.
+    // getItems drains that intent before scheduling, including offline recovery.
+    if (!(await readItemSyncState(userId)).pendingDeletionCancellations?.length) {
+      await reconcileRestored(items, active);
+      await reconcileDaily(items);
+    }
     if (changed && active()) restoreListeners.forEach(listener => listener());
   });
 }
@@ -336,7 +402,11 @@ export function getItems(): Promise<ReminderItem[]> {
           await transactItemState(userId, state => {
             state.pendingDeletionCancellations = (state.pendingDeletionCancellations ?? []).filter(id => !pending.includes(id));
           });
-        } catch { /* Keep durable cancellation intent for the next read/sync. */ }
+        } catch {
+          // Do not create a replacement with the same OS identity while its old
+          // cancellation is still pending; a later retry would cancel the new alarm.
+          return items.filter(item => !item.dailyHidden);
+        }
       }
     }
     await reconcileRestored(items, () => taskAccount === getItemAccount());

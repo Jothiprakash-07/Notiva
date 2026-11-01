@@ -1,6 +1,9 @@
 import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
 import bcrypt from "bcryptjs";
+import mongoose from "mongoose";
+import Member from "../models/OrganizationMember.js";
+import JoinRequest from "../models/OrganizationJoinRequest.js";
 import jwt from "jsonwebtoken";
 import User from "../models/user.js";
 import Organization from "../models/Organization.js";
@@ -12,9 +15,13 @@ import authRoutes from "../routes/authRoutes.js";
 // is contacted; password hashing and JWT verification use the actual libraries.
 const originalUser = Object.fromEntries(["findOne", "findById", "findByIdAndUpdate", "findOneAndUpdate", "updateOne", "create"].map(key => [key, User[key]]));
 const originalOrganization = Organization.findOne;
+const orgOriginal = { findOneAndUpdate: Organization.findOneAndUpdate, transaction: mongoose.connection.transaction,
+  memberFindOne: Member.findOne, requestFindOne: JoinRequest.findOne };
 const secret = process.env.JWT_SECRET;
 afterEach(() => {
   Object.assign(User, originalUser); Organization.findOne = originalOrganization;
+  Organization.findOneAndUpdate = orgOriginal.findOneAndUpdate; mongoose.connection.transaction = orgOriginal.transaction;
+  Member.findOne = orgOriginal.memberFindOne; JoinRequest.findOne = orgOriginal.requestFindOne;
   if (secret === undefined) delete process.env.JWT_SECRET; else process.env.JWT_SECRET = secret;
 });
 const user = { _id: "507f1f77bcf86cd799439011", fullName: "Test User", email: "test@example.com", mobileNumber: "+919876543210", department: "Design", organizationCode: "", role: "user", password: "private-hash" };
@@ -38,11 +45,10 @@ test("valid JWT loads the account by ID", async () => {
   assert.equal(passed, true); assert.equal(req.user, user);
 });
 test("profile returns permitted user and organization fields only", async () => {
-  Organization.findOne = async () => ({ organizationName: "Studio", organizationCode: "ORG-ABC123", gstNumber: "private", email: "office@example.com" });
+  Organization.findOne = async () => ({ organizationName: "Studio", organizationCode: "ORG-ABC123", email: "office@example.com" });
   const res = response();
   await getProfile({ user: { ...user, organizationCode: "ORG-ABC123" } }, res);
   assert.equal(res.body.user.password, undefined);
-  assert.equal(res.body.organization.gstNumber, undefined);
   assert.equal(res.body.organization.organizationName, "Studio");
 });
 test("profile edits normalize email and never expose a password", async () => {
@@ -119,17 +125,26 @@ test("JWT versions reject stale, malformed and missing claims after revocation",
 });
 
 test("organization join rejects unknown code without writing user", async () => {
-  Organization.findOne = async () => null;
+  mongoose.connection.transaction = async work => work(null);
+  Organization.findOneAndUpdate = async () => null;
   User.findByIdAndUpdate = async () => assert.fail("must not update");
   const res = response(); await joinOrganization({ user, body: { organizationCode: "ORG-ABC123" } }, res);
   assert.equal(res.code, 404);
 });
-test("organization join updates only a verified organization code", async () => {
-  Organization.findOne = async query => { assert.equal(query.organizationCode, "ORG-ABC123"); return { organizationName: "Studio", organizationCode: "ORG-ABC123" }; };
-  User.findByIdAndUpdate = async (id, update) => { assert.deepEqual(update, { $set: { organizationCode: "ORG-ABC123" } }); return { ...user, ...update.$set }; };
+
+test("legacy organization join returns pending state without writing user", async () => {
+  mongoose.connection.transaction = async work => work(null);
+  Organization.findOneAndUpdate = async query => {
+    assert.equal(query.joinCode, "ORG-ABC123"); assert.equal(query.status, "active");
+    return { _id: "507f1f77bcf86cd799439022", joinCode: "ORG-ABC123" };
+  };
+  Member.findOne = () => ({ session: async () => null });
+  JoinRequest.findOne = () => ({ session: async () => ({ _id: "507f1f77bcf86cd799439033", status: "pending" }) });
+  User.findByIdAndUpdate = async () => assert.fail("must not write legacy user link");
   const res = response(); await joinOrganization({ user, body: { organizationCode: " org-abc123 " } }, res);
-  assert.equal(res.code, 200); assert.equal(res.body.user.organizationCode, "ORG-ABC123"); assert.equal(res.body.user.password, undefined);
+  assert.equal(res.code, 200); assert.equal(res.body.request.status, "pending"); assert.equal(res.body.user, undefined);
 });
+
 test("registration cannot bypass organization verification", async () => {
   User.findOne = async () => null; Organization.findOne = async () => null;
   User.create = async () => assert.fail("must not register with unknown organization");

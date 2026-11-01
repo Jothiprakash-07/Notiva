@@ -1,0 +1,4 @@
+package android.app; import android.content.*;public class PendingIntent {
+ public static final int FLAG_UPDATE_CURRENT=1,FLAG_IMMUTABLE=2,FLAG_NO_CREATE=4;public final Intent intent;final String key;
+ PendingIntent(Intent i){intent=i;key=i.identity();}public static PendingIntent getBroadcast(Context c,int r,Intent i,int f){return new PendingIntent(i);}public static PendingIntent getActivity(Context c,int r,Intent i,int f){return new PendingIntent(i);}
+ public void cancel(){}public boolean equals(Object o){return o instanceof PendingIntent p&&key.equals(p.key);}public int hashCode(){return key.hashCode();}}

@@ -144,12 +144,15 @@ test("public availability has no account information and uses case-insensitive l
   assert.equal(authRoutes.stack.find(x => x.route?.path === "/registration/notiva-id/availability").route.stack[0].handle, recoveryRateLimit);
 });
 
-test("registration checks organization and organization registration remains separate", async () => {
-  const body = { ...registration(), organizationCode: "ORG-ABC123" }; assert.equal((await call(registerUser, body)).code, 400);
-  Organization.findOne = async () => ({ organizationCode: body.organizationCode }); assert.equal((await call(registerUser, body)).body.user.organizationCode, body.organizationCode);
-  Organization.findOne = async () => null; Organization.create = async value => ({ ...value, _id: "org-1" });
-  assert.equal((await call(registerOrganization, { organizationName: "Studio", email: "org@example.com", mobileNumber: "1234567890", address: "Office" })).code, 201);
+test("registration directs organization joins to approval flow and organization creation requires login", async () => {
+  const body = { ...registration(), organizationCode: "ORG-ABC123" };
+  const result = await call(registerUser, body);
+  assert.equal(result.code, 400); assert.equal(result.body.code, "JOIN_AFTER_REGISTRATION");
+  Organization.findOne = async () => ({ organizationCode: body.organizationCode });
+  assert.equal((await call(registerUser, body)).code, 400);
+  assert.equal((await call(registerOrganization, { organizationName: "Studio" }, null)).code, 401);
 });
+
 test("mixed-case ID and legacy login work; tokens contain current version and errors stay generic", async () => {
   account.notivaId = "JOTHI-07"; account.tokenVersion = 7;
   for (const identifier of ["jothi-07", "JOTHI-07", "JoThI-07", "legacy@example.com"]) {

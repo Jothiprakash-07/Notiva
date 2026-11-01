@@ -71,6 +71,9 @@ class AlarmService : Service() {
   } } ?: emptyList()
   private var ringingSlot: String? = null
   fun dismissGroup() { group().map { it.getString("id") }.forEach { remove(it) } }
+  fun removeSource(id: String) {
+    alarms.values.filter { it.optString("sourceId", it.optString("id")) == id }.map { it.getString("id") }.forEach { remove(it) }
+  }
 
   override fun onCreate() {
     super.onCreate()

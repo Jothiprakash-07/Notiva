@@ -1,0 +1,11 @@
+import type { SharedItem, SharedRecurrence, SharedOccurrenceResult } from "../types/shared";
+export type DueOccurrence = { key: string; date: string; startAt: string; endAt?: string };
+export const repeats: string[];
+export function normalizeRecurrence(value: unknown, schedule: SharedItem["schedule"]): SharedRecurrence;
+export function currentOccurrence(item: SharedItem, now?: Date, recipient?: { eligibleFrom?: string; excludedOccurrenceKey?: string }): DueOccurrence | null;
+export function dueOn(item: SharedItem, day: Date | string): DueOccurrence | null;
+export function nextOccurrence(item: SharedItem, after?: Date, history?: SharedOccurrenceResult[], globalHistory?: SharedOccurrenceResult[]): DueOccurrence | null;
+export function occurrenceStatus(item: SharedItem, due: DueOccurrence | null, recipient?: SharedOccurrenceResult, global?: SharedOccurrenceResult, now?: Date): string;
+export function mergeHistory(history: SharedOccurrenceResult[], row: SharedOccurrenceResult): SharedOccurrenceResult[];
+export function wallDateKey(time: Date | string, zone: string): string;
+export function nextMidnight(now: Date, zone: string): number;

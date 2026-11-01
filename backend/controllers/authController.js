@@ -1,31 +1,11 @@
 import bcrypt from "bcryptjs";
-import { randomBytes } from "crypto";
 import { deviceMetadata, loginSession } from "../services/sessions.js";
 import User from "../models/user.js";
-import Organization from "../models/Organization.js";
 import { normalize, validNotivaId, notivaIdFormat, notivaIdTaken, validEmail, validPassword, validMobile } from "../services/identity.js";
 import { findNotivaId, suggestNotivaId, isNotivaDuplicate } from "../services/notivaIdentity.js";
 import { publicUser } from "./profileController.js";
+import { create as createOrganizationEndpoint } from "./organizationController.js";
 import { reconcileLegacyEmail } from "../services/identityMigration.js";
-
-const createOrganizationCode = () => {
-  return `ORG-${randomBytes(3).toString("hex").toUpperCase()}`;
-};
-
-const getUniqueOrganizationCode = async () => {
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    const organizationCode = createOrganizationCode();
-    const existingOrganization = await Organization.findOne({
-      organizationCode,
-    });
-
-    if (!existingOrganization) {
-      return organizationCode;
-    }
-  }
-
-  throw new Error("Unable to generate a unique organization code.");
-};
 
 // Register personal accounts with an independent login ID and recovery address.
 export const registerUser = async (req, res) => {
@@ -40,7 +20,7 @@ export const registerUser = async (req, res) => {
   if (password !== confirmPassword) return res.status(400).json({ message: "Passwords do not match." });
   try {
     const organizationCode = typeof body.organizationCode === "string" ? body.organizationCode.trim().toUpperCase() : "";
-    if (organizationCode && !(await Organization.findOne({ organizationCode }))) return res.status(400).json({ message: "Organization code was not found." });
+    if (organizationCode) return res.status(400).json({ code: "JOIN_AFTER_REGISTRATION", message: "Create your personal account without an organization code, then sign in and submit a join request." });
     if (await findNotivaId(notivaId)) return res.status(409).json({ message: notivaIdTaken });
     const user = await User.create({ fullName: fullName.trim(), notivaId, recoveryEmail, recoveryEmailVerified: false,
       mobileNumber: mobileNumber.trim(), password: await bcrypt.hash(password, 10),
@@ -84,71 +64,9 @@ export const loginUser = async (req, res) => {
     return res.status(503).json({ message: "Unable to log in right now. Please try again." });
   }
 };
-// Register organization
+// Authenticated compatibility alias. New organizations always have an Owner.
 export const registerOrganization = async (req, res) => {
-  try {
-    const {
-      gstNumber,
-      organizationName,
-      email,
-      mobileNumber,
-      address,
-    } = req.body;
-
-    const trimmedGstNumber = gstNumber?.trim() || "";
-    const trimmedOrganizationName = organizationName?.trim() || "";
-    const trimmedEmail = email?.trim() || "";
-    const trimmedMobileNumber = mobileNumber?.trim() || "";
-    const trimmedAddress = address?.trim() || "";
-
-    if (!trimmedGstNumber) {
-      if (
-        !trimmedOrganizationName ||
-        !trimmedEmail ||
-        !trimmedMobileNumber ||
-        !trimmedAddress
-      ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Organization name, email, mobile number and address are required when GST is not provided.",
-        });
-      }
-    }
-
-    const organizationCode = await getUniqueOrganizationCode();
-
-    const organization = await Organization.create({
-      gstNumber: trimmedGstNumber,
-      organizationName: trimmedOrganizationName,
-      email: trimmedEmail.toLowerCase(),
-      mobileNumber: trimmedMobileNumber,
-      address: trimmedAddress,
-      organizationCode,
-      role: "organization",
-    });
-
-    return res.status(201).json({
-      success: true,
-      message: "Organization registered successfully.",
-      organization: {
-        id: organization._id,
-        gstNumber: organization.gstNumber,
-        organizationName: organization.organizationName,
-        email: organization.email,
-        mobileNumber: organization.mobileNumber,
-        address: organization.address,
-        organizationCode: organization.organizationCode,
-        role: organization.role,
-      },
-    });
-  } catch (error) {
-    console.error("Organization register error:", error);
-
-    return res.status(500).json({
-      success: false,
-      message: "Server error while registering organization.",
-      error: error.message,
-    });
-  }
+  if (!req.user) return res.status(401).json({ message: "Sign in before creating an organization." });
+  req.body = { ...req.body, name: req.body?.name ?? req.body?.organizationName };
+  return createOrganizationEndpoint(req, res);
 };

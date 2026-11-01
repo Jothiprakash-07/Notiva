@@ -19,6 +19,7 @@ function harness(os = 'android', Clock = Date, options = {}) {
     weeklyOccurrencesVersion: async () => 1,
     weekdaysOccurrencesVersion: async () => 1,
     nativePreAlertsVersion: async () => 1,
+    sharedRecurrenceVersion: async () => 1,
     setPreAlertSettings: async (enabled, vibration) => { bridge.preEnabled = enabled; bridge.preVibration = vibration; },
     hasSchedule: async id => alarms.has(id),
     canSchedule: async () => exact, canFullScreen: async () => true,
@@ -59,10 +60,10 @@ function harness(os = 'android', Clock = Date, options = {}) {
     const module = { exports: {} }; cache.set(file, module);
     const code = ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText;
     vm.runInNewContext(code, { module, exports: module.exports, __DEV__: true, Date: Clock, Error,
-      setTimeout, clearTimeout, AbortController, fetch: options.fetch, process: { env: {} },
+      setTimeout, clearTimeout, setInterval, clearInterval, AbortController, fetch: options.fetch, process: { env: {} },
       localStorage: options.localStorage,
       console: { log: (...args) => diagnostics.push(args), warn: (...args) => diagnostics.push(args) },
-      require: name => mocks[name] || load(path.relative(root, path.resolve(path.dirname(file), name + '.ts'))),
+      require: name => mocks[name] || load(path.relative(root, path.resolve(path.dirname(file), name.endsWith('.cjs') ? name : name + '.ts'))),
     }, { filename: file });
     return module.exports;
   }

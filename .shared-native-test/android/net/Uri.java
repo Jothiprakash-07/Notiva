@@ -1,0 +1,4 @@
+package android.net; public class Uri {final String raw;Uri(String r){raw=r;}public static Uri parse(String r){return new Uri(r);}
+ public static String encode(String s){return java.net.URLEncoder.encode(s,java.nio.charset.StandardCharsets.UTF_8).replace("+","%20");}
+ public String getSchemeSpecificPart(){return java.net.URLDecoder.decode(raw.substring(raw.indexOf(':')+1).split("#",2)[0],java.nio.charset.StandardCharsets.UTF_8);}
+ public String getFragment(){return raw.contains("#")?java.net.URLDecoder.decode(raw.split("#",2)[1],java.nio.charset.StandardCharsets.UTF_8):null;}public String toString(){return raw;}}

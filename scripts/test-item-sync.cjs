@@ -3,25 +3,32 @@ const assert = require('node:assert/strict');
 const { harness, makeItem: baseMakeItem } = require('./test-native-alarms.cjs');
 const wait = () => new Promise(resolve => setImmediate(resolve));
 const clone = value => JSON.parse(JSON.stringify(value));
-function fixture(os = 'android', Clock = Date) {
+function fixture(os = 'android', Clock = Date, transport) {
   const rows = new Map(), archives = new Map(), calls = [], appListeners = [], networkListeners = [];
   const owners = new Map();
   let activeToken;
-  let online = false, gate, failStatus, failMethod, state = 'active';
+  let online = false, gate, failStatus, failMethod, fault, state = 'active';
   const network = {
     getNetworkStateAsync: async () => ({ isConnected: online, isInternetReachable: online }),
     addNetworkStateListener: fn => { networkListeners.push(fn); return { remove: () => networkListeners.splice(networkListeners.indexOf(fn), 1) }; },
   };
   const fetch = async (url, init) => {
-    calls.push({ url, method: init.method, body: init.body && JSON.parse(init.body), account: init.headers.Authorization });
+    const call = { url, method: init.method, body: init.body && JSON.parse(init.body), account: init.headers.Authorization };
+    calls.push(call);
     if (gate) await gate;
     if (!online) throw Error('offline');
     if (activeToken && init.headers.Authorization !== `Bearer ${activeToken}`) return { ok: false, status: 401, json: async () => ({ code: 'SESSION_REVOKED' }) };
     if (failStatus && (!failMethod || init.method === failMethod)) return { ok: false, status: failStatus };
+    const injected = fault?.({ ...call, phase: 'before' });
+    if (injected) return injected;
+    if (transport) {
+      const response = await transport(url, init);
+      return fault?.({ ...call, phase: 'after', status: response.status }) ?? response;
+    }
     const parsed = new URL(url);
     const owner = `Bearer ${owners.get(init.headers.Authorization.slice(7)) ?? init.headers.Authorization.slice(7)}`, id = decodeURIComponent(parsed.pathname.split('/api/items')[1].slice(1));
     const key = `${owner}:${id}`, body = init.body && JSON.parse(init.body);
-    const res = (status, value) => ({ ok: status < 400, status, json: async () => clone(value) });
+    const res = (status, value) => fault?.({ ...call, phase: 'after', status }) ?? ({ ok: status < 400, status, json: async () => clone(value) });
     if (init.method === 'POST') {
       const k = `${owner}:${body.clientItemId}`; if (rows.has(k)) return res(409, {});
       const item = { ...body, revision: 1, serverUpdatedAt: new Clock().toISOString() }; rows.set(k, item); return res(201, { item });
@@ -63,6 +70,7 @@ function fixture(os = 'android', Clock = Date) {
     storage: () => h.load('services/itemStorage.ts'), queue: () => h.load('services/itemSyncQueue.ts'), sync: () => h.load('services/itemSyncService.ts'),
     online(value) { online = value; networkListeners.forEach(fn => fn({ isConnected: value, isInternetReachable: value })); },
     gate(value) { gate = value; }, fail(value, method) { failStatus = value; failMethod = method; }, state(value) { state = value; appListeners.forEach(fn => fn(value)); },
+    injectFault(value) { fault = value; },
   };
 }
 // Numeric local components deliberately follow the product's local calendar rule.

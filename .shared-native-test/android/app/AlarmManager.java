@@ -1,0 +1,3 @@
+package android.app; import java.util.*;public class AlarmManager {
+ public final Map<PendingIntent,Long> scheduled=new HashMap<>();public static class AlarmClockInfo {final long time;public AlarmClockInfo(long t,PendingIntent p){time=t;}}
+ public boolean canScheduleExactAlarms(){return true;}public void setAlarmClock(AlarmClockInfo i,PendingIntent p){scheduled.put(p,i.time);}public void cancel(PendingIntent p){scheduled.remove(p);}}

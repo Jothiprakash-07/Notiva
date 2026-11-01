@@ -7,6 +7,8 @@ export type SyncOperation = {
   payload?: Record<string, unknown>;
   expectedRevision?: number;
   conflict?: ItemConflict;
+  /** Original attempted POST evidence, retained across edits/deletes after a lost response. */
+  createAttemptPayload?: Record<string, unknown>;
 };
 export type ServerItemDeletion = { clientItemId: string; deletedAt: string; revision?: number };
 export type ItemSyncState = { version: 1; items: ReminderItem[]; queue: SyncOperation[];
@@ -17,6 +19,7 @@ let writes: Promise<unknown> = Promise.resolve();
 let sequence = 0;
 let wake: (() => void) | undefined;
 export function onItemQueueChanged(callback?: () => void) { wake = callback; }
+export function notifyItemQueueChanged() { wake?.(); }
 export const itemNamespace = (userId: string) => `notiva.items.v1:${encodeURIComponent(userId)}`;
 export const queueNamespace = (userId: string) => `notiva.item.sync.queue.v1:${encodeURIComponent(userId)}`;
 
@@ -97,6 +100,8 @@ function queueDeletion(state: ItemSyncState, item: ReminderItem, retainedAnchor 
   if (!neverSent) {
     const next = operation(item.id, "delete", itemPayload(item));
     next.expectedRevision = pending?.expectedRevision ?? item.serverRevision;
+    if (pending?.type === "create" && pending.attempted && !item.serverRevision)
+      next.createAttemptPayload = pending.createAttemptPayload ?? pending.payload;
     if (pending?.conflict) { next.conflict = pending.conflict; next.error = "conflict"; state.tombstones[item.id].conflict = pending.conflict; state.tombstones[item.id].syncStatus = "conflict"; }
     state.queue.push(next);
   }
@@ -131,6 +136,7 @@ export async function commitLocalItems(userId: string, items: ReminderItem[]) {
         // Further local edits never resolve or silently rebase a conflict.
         if (pending?.conflict) { next.conflict = pending.conflict; next.error = "conflict"; }
         if (pending?.attempted) next.attempted = true;
+        if (pending?.createAttemptPayload) next.createAttemptPayload = pending.createAttemptPayload;
         state.queue = state.queue.filter(row => row.clientItemId !== item.id); state.queue.push(next);
         item.syncStatus = next.conflict ? "conflict" : type === "create" ? "pending_create" : "pending_update";
         item.conflict = next.conflict;

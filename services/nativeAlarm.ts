@@ -12,6 +12,7 @@ type AlarmBridge = {
   weeklyOccurrencesVersion?(): Promise<number>;
   weekdaysOccurrencesVersion?(): Promise<number>;
   nativePreAlertsVersion?(): Promise<number>;
+  sharedRecurrenceVersion?(): Promise<number>;
   setPreAlertSettings?(enabled: boolean, vibration: boolean): Promise<void>;
   hasSchedule?(id: string): Promise<boolean>;
   canFullScreen(): Promise<boolean>;

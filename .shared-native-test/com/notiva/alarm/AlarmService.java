@@ -1,0 +1,1 @@
+package com.notiva.alarm;public class AlarmService {public static final Companion Companion=new Companion(); public static class Companion {public AlarmService getInstance(){return null;}} public void dismissGroup(){}public void remove(String s){}public void removeSource(String s){}}

@@ -1,7 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
-import { API_BASE_URL } from "../../../services/apiConfig";
+import { router } from "expo-router";
+import { useAuth } from "../../../contexts/AuthContext";
+import { organizationApi } from "../../../services/sharedApi";
 import * as Clipboard from "expo-clipboard";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -35,7 +37,9 @@ type FieldErrors = {
 export default function OrganizationRegisterScreen({
   onBack,
 }: OrganizationRegisterScreenProps) {
-  const [gstNumber, setGstNumber] = useState("");
+  const { session, isLoading } = useAuth();
+  const creationLock = useRef(false);
+  const created = useRef(false);
   const [organizationName, setOrganizationName] = useState("");
   const [email, setEmail] = useState("");
   const [mobileNumber, setMobileNumber] = useState("");
@@ -49,7 +53,6 @@ export default function OrganizationRegisterScreen({
   const [copied, setCopied] = useState(false);
 
   const clearForm = () => {
-    setGstNumber("");
     setOrganizationName("");
     setEmail("");
     setMobileNumber("");
@@ -71,7 +74,6 @@ export default function OrganizationRegisterScreen({
   };
 
   const validateForm = () => {
-    const trimmedGstNumber = gstNumber.trim();
     const trimmedOrganizationName =
       organizationName.trim();
     const trimmedEmail = email.trim();
@@ -81,13 +83,6 @@ export default function OrganizationRegisterScreen({
 
     const newErrors: FieldErrors = {};
 
-    // If GST is provided, remaining fields are optional.
-    if (trimmedGstNumber.length > 0) {
-      setErrors({});
-      return true;
-    }
-
-    // If GST is empty, below fields are required.
     if (!trimmedOrganizationName) {
       newErrors.organizationName =
         "Organization name is required.";
@@ -122,47 +117,18 @@ export default function OrganizationRegisterScreen({
   };
 
   const handleCreateAccount = async () => {
-    if (!validateForm()) {
-      return;
-    }
-
+    if (creationLock.current || created.current || isLoading) return;
+    if (!session) { setErrors({ api: "Sign in before creating an organization." }); return; }
+    if (!validateForm()) return;
+    creationLock.current = true;
     try {
       setSubmitting(true);
       setErrors({});
-
-      const response = await fetch(
-        `${API_BASE_URL}/api/auth/organization-register`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            gstNumber: gstNumber.trim(),
-            organizationName:
-              organizationName.trim(),
-            email: email.trim(),
-            mobileNumber:
-              mobileNumber.trim(),
-            address: address.trim(),
-          }),
-        }
-      );
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        setErrors({
-          api:
-            data?.message ||
-            "Organization registration failed.",
-        });
-
-        return;
-      }
-
-      const code =
-        data?.organization?.organizationCode;
+      const data = await organizationApi.create(session.user.id, {
+        name: organizationName.trim(), email: email.trim(),
+        mobileNumber: mobileNumber.trim(), address: address.trim(),
+      });
+      const code = data.organization.joinCode;
 
       if (!code) {
         setErrors({
@@ -173,6 +139,7 @@ export default function OrganizationRegisterScreen({
         return;
       }
 
+      created.current = true;
       setOrganizationCode(code);
       setCopied(false);
       setShowCodePopup(true);
@@ -188,6 +155,7 @@ export default function OrganizationRegisterScreen({
         api: message,
       });
     } finally {
+      creationLock.current = false;
       setSubmitting(false);
     }
   };
@@ -208,7 +176,7 @@ export default function OrganizationRegisterScreen({
     setShowCodePopup(false);
     setCopied(false);
 
-    onBack?.();
+    if (onBack) onBack(); else if (router.canGoBack()) router.back(); else router.replace(session ? "/(tabs)/team" : "/");
   };
 
   return (
@@ -237,7 +205,7 @@ export default function OrganizationRegisterScreen({
               pressed &&
                 styles.backButtonPressed,
             ]}
-            onPress={onBack}
+            onPress={() => { if (onBack) onBack(); else if (router.canGoBack()) router.back(); else router.replace(session ? "/(tabs)/team" : "/"); }}
           >
             <Ionicons
               name="arrow-back"
@@ -250,7 +218,7 @@ export default function OrganizationRegisterScreen({
             allowFontScaling={false}
             style={styles.headerTitle}
           >
-            Create account
+            Organization Registration
           </Text>
 
           <View style={styles.headerRightSpace} />
@@ -263,92 +231,16 @@ export default function OrganizationRegisterScreen({
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          {/* Intro */}
-          <View style={styles.intro}>
-            <View style={styles.introIcon}>
-              <Ionicons
-                name="business-outline"
-                size={24}
-                color="#4d3fe6"
-              />
-            </View>
-
-            <View style={styles.introCopy}>
-              <Text style={styles.introTitle}>
-                Organization Registration
-              </Text>
-
-              <Text style={styles.introText}>
-                Register using GST, or provide your
-                organization details manually.
-              </Text>
-            </View>
-          </View>
-
-          {/* GST */}
-          <View style={styles.sectionCard}>
-            <SectionHeader
-              icon="document-text-outline"
-              title="Register with GST"
-              subtitle="Use GST number for a faster registration"
-            />
-
-            <FieldLabel
-              label="GST Number"
-              optional
-            />
-
-            <InputBox icon="receipt-outline">
-              <TextInput
-                style={styles.input}
-                placeholder="Enter your GST number"
-                placeholderTextColor="#9ca3af"
-                autoCapitalize="characters"
-                value={gstNumber}
-                onChangeText={(text) => {
-                  setGstNumber(text);
-
-                  if (
-                    text.trim().length > 0
-                  ) {
-                    setErrors({});
-                  } else {
-                    clearError();
-                  }
-                }}
-              />
-            </InputBox>
-
-            <Text style={styles.gstHint}>
-              If you enter a GST number, the fields
-              below are optional.
-            </Text>
-          </View>
-
-          {/* OR divider */}
-          <View style={styles.dividerRow}>
-            <View style={styles.dividerLine} />
-
-            <View style={styles.orBadge}>
-              <Text style={styles.dividerText}>
-                OR
-              </Text>
-            </View>
-
-            <View style={styles.dividerLine} />
-          </View>
-
           {/* Manual details */}
           <View style={styles.sectionCard}>
             <SectionHeader
               icon="create-outline"
               title="Organization Details"
-              subtitle="Required only when GST is not provided"
             />
 
             <FieldLabel
               label="Organization Name"
-              required={!gstNumber.trim()}
+              required
             />
 
             <InputBox
@@ -359,6 +251,9 @@ export default function OrganizationRegisterScreen({
             >
               <TextInput
                 style={styles.input}
+                accessibilityLabel="Organization Name"
+                maxLength={100}
+                editable={!submitting && !created.current}
                 placeholder="Enter organization name"
                 placeholderTextColor="#9ca3af"
                 autoCapitalize="words"
@@ -380,7 +275,7 @@ export default function OrganizationRegisterScreen({
 
             <FieldLabel
               label="Email Address"
-              required={!gstNumber.trim()}
+              required
             />
 
             <InputBox
@@ -389,6 +284,9 @@ export default function OrganizationRegisterScreen({
             >
               <TextInput
                 style={styles.input}
+                accessibilityLabel="Email Address"
+                maxLength={254}
+                editable={!submitting && !created.current}
                 placeholder="john.e07@gmail.com"
                 placeholderTextColor="#9ca3af"
                 keyboardType="email-address"
@@ -408,7 +306,7 @@ export default function OrganizationRegisterScreen({
 
             <FieldLabel
               label="Mobile Number"
-              required={!gstNumber.trim()}
+              required
             />
 
             <InputBox
@@ -419,6 +317,9 @@ export default function OrganizationRegisterScreen({
             >
               <TextInput
                 style={styles.input}
+                accessibilityLabel="Mobile Number"
+                maxLength={30}
+                editable={!submitting && !created.current}
                 placeholder="+91 98567 41236"
                 placeholderTextColor="#9ca3af"
                 keyboardType="phone-pad"
@@ -440,7 +341,7 @@ export default function OrganizationRegisterScreen({
 
             <FieldLabel
               label="Address"
-              required={!gstNumber.trim()}
+              required
             />
 
             <InputBox
@@ -453,6 +354,9 @@ export default function OrganizationRegisterScreen({
                   styles.input,
                   styles.addressInput,
                 ]}
+                accessibilityLabel="Address"
+                maxLength={500}
+                editable={!submitting && !created.current}
                 placeholder="Enter your address"
                 placeholderTextColor="#9ca3af"
                 multiline
@@ -469,6 +373,8 @@ export default function OrganizationRegisterScreen({
               message={errors.address}
             />
           </View>
+
+          {!isLoading && !session && <View style={styles.apiErrorBox}><Text style={styles.apiErrorText}>Sign in before creating an organization.</Text><Pressable accessibilityRole="button" onPress={() => onBack ? onBack() : router.replace("/")}><Text>Sign In</Text></Pressable></View>}
 
           {/* API error */}
           {errors.api ? (
@@ -488,7 +394,7 @@ export default function OrganizationRegisterScreen({
           {/* Create */}
           <Pressable
             accessibilityRole="button"
-            disabled={submitting}
+            disabled={submitting || isLoading || created.current || !session}
             style={({ pressed }) => [
               styles.createButton,
 
@@ -594,7 +500,7 @@ export default function OrganizationRegisterScreen({
               allowFontScaling={false}
               style={styles.modalDescription}
             >
-              Save this code. Users can enter it
+              You are the Owner. Save this code. Users can enter it
               when joining your organization.
             </Text>
 
@@ -662,7 +568,7 @@ export default function OrganizationRegisterScreen({
                   styles.continueButtonText
                 }
               >
-                Back to Login
+                {session ? "Done" : "Back to Login"}
               </Text>
             </Pressable>
           </View>
@@ -679,7 +585,7 @@ function SectionHeader({
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   title: string;
-  subtitle: string;
+  subtitle?: string;
 }) {
   return (
     <View style={styles.sectionHeader}>
@@ -696,11 +602,7 @@ function SectionHeader({
           {title}
         </Text>
 
-        <Text
-          style={styles.sectionSubtitle}
-        >
-          {subtitle}
-        </Text>
+        {!!subtitle && <Text style={styles.sectionSubtitle}>{subtitle}</Text>}
       </View>
     </View>
   );
@@ -709,11 +611,9 @@ function SectionHeader({
 function FieldLabel({
   label,
   required = false,
-  optional = false,
 }: {
   label: string;
   required?: boolean;
-  optional?: boolean;
 }) {
   return (
     <View style={styles.fieldLabelRow}>
@@ -727,11 +627,6 @@ function FieldLabel({
         </Text>
       ) : null}
 
-      {optional ? (
-        <Text style={styles.optional}>
-          Optional
-        </Text>
-      ) : null}
     </View>
   );
 }
@@ -880,51 +775,10 @@ const styles = StyleSheet.create({
     paddingBottom: 44,
   },
 
-  intro: {
-    flexDirection: "row",
-    alignItems: "center",
 
-    gap: 12,
 
-    marginBottom: 18,
-  },
 
-  introIcon: {
-    width: 48,
-    height: 48,
 
-    borderRadius: 15,
-
-    backgroundColor: "#efedff",
-
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  introCopy: {
-    flex: 1,
-    minWidth: 0,
-  },
-
-  introTitle: {
-    color: "#171329",
-
-    fontSize: 19,
-    lineHeight: 24,
-
-    fontWeight: "900",
-  },
-
-  introText: {
-    color: "#8b8f9c",
-
-    fontSize: 11,
-    lineHeight: 17,
-
-    fontWeight: "600",
-
-    marginTop: 3,
-  },
 
   sectionCard: {
     width: "100%",
@@ -1015,24 +869,6 @@ const styles = StyleSheet.create({
     marginLeft: 2,
   },
 
-  optional: {
-    color: "#9ca3af",
-
-    fontSize: 9,
-
-    fontWeight: "700",
-
-    marginLeft: 7,
-
-    backgroundColor: "#f3f4f6",
-
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-
-    borderRadius: 7,
-
-    overflow: "hidden",
-  },
 
   inputBox: {
     width: "100%",
@@ -1129,56 +965,10 @@ const styles = StyleSheet.create({
     height: 13,
   },
 
-  gstHint: {
-    color: "#8b8f9c",
 
-    fontSize: 10,
-    lineHeight: 16,
 
-    fontWeight: "600",
 
-    marginTop: 8,
-  },
 
-  dividerRow: {
-    width: "100%",
-
-    flexDirection: "row",
-    alignItems: "center",
-
-    marginVertical: 2,
-    marginBottom: 16,
-  },
-
-  dividerLine: {
-    flex: 1,
-
-    height: 1,
-
-    backgroundColor: "#dedde8",
-  },
-
-  orBadge: {
-    minWidth: 38,
-    height: 26,
-
-    borderRadius: 13,
-
-    backgroundColor: "#efedff",
-
-    alignItems: "center",
-    justifyContent: "center",
-
-    marginHorizontal: 10,
-  },
-
-  dividerText: {
-    color: "#4d3fe6",
-
-    fontSize: 10,
-
-    fontWeight: "900",
-  },
 
   apiErrorBox: {
     width: "100%",

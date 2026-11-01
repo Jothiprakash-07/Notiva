@@ -7,6 +7,7 @@ import { nativeAlarm, readPendingAlarmDone } from '../../services/nativeAlarm';
 import { getItemStatus } from '../../utils/itemStatus';
 import type { ReminderItem } from '../../types/item';
 import { ownsAlarmItemId } from '../../services/itemAccount';
+import { parseSharedAlarmId } from '../../services/sharedAlarms';
 
 /** Native Done is durable across cold launches; status changes only on confirmation. */
 export default function NativeAlarmCompletion() {
@@ -29,6 +30,14 @@ export default function NativeAlarmCompletion() {
         if (!action || !active) return;
         if (action.token === pending?.token) return;
         if (!ownsAlarmItemId(action.itemId)) return;
+        const shared = parseSharedAlarmId(action.itemId);
+        if (shared) {
+          // Native Done dismisses the local alarm. Shared completion is confirmed
+          // against current server permission/revision in the shared detail UI.
+          router.push({ pathname: '/screens/shared/item', params: { organizationId: shared.organizationId, id: shared.itemId, fromAlarm: '1' } });
+          await nativeAlarm().acknowledgeDone(action.token);
+          return;
+        }
         const item = await getItemById(action.itemId);
         if (!active || saving.current) return;
         if (!item || !['Pending', 'Missed', 'Overdue'].includes(getItemStatus(item)) || !['reminder', 'task'].includes(item.type)) {
